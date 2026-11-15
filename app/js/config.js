@@ -11,7 +11,7 @@ export const FONT = 'Bahnschrift, "Segoe UI", system-ui, sans-serif';
 
 // Indirizzo del server delle sfide online (Cloudflare Worker "trivella-online", vedi cartella server).
 // Se è vuoto la voce "Sfida online" non compare nel menu.
-export const ONLINE_URL = 'wss://trivella-online.cam2d.workers.dev';
+export const ONLINE_URL = 'wss://trivella-online.trivella2026.workers.dev';
 
 export const PAUSE_BTN ={ x: 1246, y: 30, r: 30 };   // pulsante di pausa sugli schermi a tocco
 

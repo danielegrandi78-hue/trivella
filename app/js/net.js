@@ -16,6 +16,18 @@ const newCode = () => String(10000 + Math.floor(Math.random() * 90000));
 // Finché il server non è pubblicato la voce "Sfida online" non compare nel menu.
 export const onlineAvailable = () => !!serverUrl();
 
+// Prova di collegamento (usata dalle prove automatiche): apre e richiude una connessione con il server.
+export function probe() {
+  return new Promise(done => {
+    const base = serverUrl();
+    if (!base) return done('server non configurato');
+    let ws; try { ws = new WebSocket(base + '/ws?room=00000&mode=join'); } catch (err) { return done('errore: ' + err.message); }
+    const timer = setTimeout(() => done('nessuna risposta'), 8000);
+    ws.onmessage = ev => { clearTimeout(timer); try { ws.close(); } catch (err) { /* già chiuso */ } done('collegato: ' + ev.data); };   // il server risponde "refused: empty"
+    ws.onerror = () => { clearTimeout(timer); done('collegamento rifiutato'); };
+  });
+}
+
 export class Net {
   constructor() {
     this.ws = null; this.gen = 0; this.paired = false;

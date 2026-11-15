@@ -3,7 +3,7 @@ import { Game } from './sim.js';
 import { Renderer } from './render.js';
 import { Input } from './input.js';
 import { Sound } from './audio.js';
-import { Net, onlineAvailable } from './net.js';
+import { Net, onlineAvailable, probe } from './net.js';
 import * as ui from './ui.js';
 import { W, H, PAUSE_BTN } from './config.js';
 import { TYPES } from './level.js';
@@ -360,6 +360,7 @@ window.__trivella = {
   // esegue n fotogrammi completi, comandi e menu compresi
   tick(n) { for (let i = 0; i < (n || 1); i++) update(1 / 60); draw(); return state(); },
   start() { startGame(); return state(); },
+  online: probe,
   // mostra un tipo di schermo preciso (0..6) per controllarne l'aspetto
   show(type, lv) { startGame(); game.startLevel(lv || 1, type); draw(); return { name: game.L.name, lanes: game.L.lanes, pellets: game.L.alive, rooms: game.L.rooms.length, entry: game.L.entry }; },
   selftest() { startGame(); return this.step(4, { dirs: [{ x: 0, y: 1 }], retract: false }); }

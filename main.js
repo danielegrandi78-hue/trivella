@@ -42,6 +42,8 @@ async function runSelftest(win) {
     console.log('[selftest] ' + state);
     await wait(600);
     fs.writeFileSync(path.join(selftestDir, 'gioco.png'), (await wc.capturePage()).toPNG());
+    const online = await wc.executeJavaScript('window.__trivella.online()');      // collegamento al server delle sfide
+    fs.writeFileSync(path.join(selftestDir, 'esito.txt'), `partita: ${state}\nsfida online: ${online}\n`);
     app.exit(0);
   } catch (err) {
     console.log('[selftest error] ' + (err && err.stack || err));

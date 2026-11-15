@@ -33,33 +33,43 @@ export class Room {
   async fetch(request) {
     const url = new URL(request.url), room = url.searchParams.get('room'), mode = url.searchParams.get('mode') || '';
     const pair = new WebSocketPair(), client = pair[0], server = pair[1];
-    const others = this.state.getWebSockets();
-    this.state.acceptWebSocket(server);
+    const others = this.state.getWebSockets('in');      // i giocatori ammessi nella stanza
     const say = (ws, msg) => { try { ws.send(JSON.stringify(msg)); } catch (err) { /* già chiuso */ } };
-    const refuse = why => { say(server, { t: 'refused', why }); try { server.close(4000, why); } catch (err) { /* già chiuso */ } };
 
-    if (room === 'lobby') {
+    // Una connessione rifiutata non va chiusa qui: chiuderla prima che il collegamento sia completato
+    // lo fa fallire e il motivo non arriverebbe. Resta aperta con l'etichetta "out", fuori dalla
+    // stanza, riceve il motivo e sarà il gioco a chiuderla.
+    let why = '';
+    if (room !== 'lobby') {
+      if (mode === 'host' && others.length) why = 'taken';
+      else if (mode === 'join' && !others.length) why = 'empty';
+      else if (others.length >= 2) why = 'full';
+    }
+    this.state.acceptWebSocket(server, [why ? 'out' : 'in']);
+    if (why) say(server, { t: 'refused', why });
+    else if (room === 'lobby') {
       if (others.length) {                      // c'è qualcuno in attesa: li abbino
         const code = String(10000 + Math.floor(Math.random() * 90000));
         for (const ws of [others[0], server]) { say(ws, { t: 'match', code }); try { ws.close(1000, 'match'); } catch (err) { /* già chiuso */ } }
       }
-    } else if (mode === 'host' && others.length) refuse('taken');
-    else if (mode === 'join' && !others.length) refuse('empty');
-    else if (others.length >= 2) refuse('full');
-    else if (others.length === 1) { say(others[0], { t: 'ready', role: 0 }); say(server, { t: 'ready', role: 1 }); }
+    } else if (others.length === 1) { say(others[0], { t: 'ready', role: 0 }); say(server, { t: 'ready', role: 1 }); }
 
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  isOut(ws) { return this.state.getTags(ws).includes('out'); }
+
   webSocketMessage(ws, message) {
-    if (typeof message !== 'string' || message.length > MAX_MESSAGE) return;
-    for (const other of this.state.getWebSockets()) if (other !== ws) { try { other.send(message); } catch (err) { /* già chiuso */ } }
+    if (typeof message !== 'string' || message.length > MAX_MESSAGE || this.isOut(ws)) return;
+    for (const other of this.state.getWebSockets('in')) if (other !== ws) { try { other.send(message); } catch (err) { /* già chiuso */ } }
   }
 
   webSocketClose(ws) { this.left(ws); }
   webSocketError(ws) { this.left(ws); }
   left(ws) {
+    const out = this.isOut(ws);
     try { ws.close(1000, 'bye'); } catch (err) { /* già chiuso */ }
-    for (const other of this.state.getWebSockets()) if (other !== ws) { try { other.send('{"t":"bye"}'); } catch (err) { /* già chiuso */ } }
+    if (out) return;
+    for (const other of this.state.getWebSockets('in')) if (other !== ws) { try { other.send('{"t":"bye"}'); } catch (err) { /* già chiuso */ } }
   }
 }
