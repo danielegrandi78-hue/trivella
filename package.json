@@ -1,0 +1,17 @@
+{
+  "name": "trivella",
+  "productName": "Trivella",
+  "version": "1.0.0",
+  "description": "Trivella - gioco arcade di perforazione",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "icons": "electron tools/make-icons.js",
+    "dist": "electron-packager . Trivella --platform=win32 --arch=x64 --out=dist --overwrite --icon=build/icon.ico --ignore=\"^/dist\" --ignore=\"^/anteprima.html\" --ignore=\"^/.claude\" --ignore=\"^/.github\" --ignore=\"^/.git\" --ignore=\"^/tools\" --ignore=\"^/build\""
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^45.3.1"
+  }
+}

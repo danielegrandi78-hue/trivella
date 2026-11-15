@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>Trivella — anteprima grafica</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #03040a; overflow: hidden; }
+  canvas { display: block; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(() => {
+'use strict';
+
+// ---------------------------------------------------------------- costanti
+const W = 1280, H = 720, GROUND = 150;
+const NX = 19, NY = 8, SP = 64, X0 = 64, Y0 = 212, TW = 30;
+const N = NX * NY, RIG = N, ENTRY = 9;
+const RIGP = { x: X0 + ENTRY * SP, y: GROUND - 2 };
+const FONT = 'Bahnschrift, "Segoe UI", system-ui, sans-serif';
+const CH = [320, 95, 255];            // tinte delle tre creature
+const CPTS = [100, 150, 200];
+const RETRACT = 700;                  // velocità di ritiro del tubo (px/s)
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const lightCv = document.createElement('canvas');
+const lctx = lightCv.getContext('2d');
+let S = 1, bg = null;
+
+const nodes = [];
+for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) nodes.push({ x: X0 + i * SP, y: Y0 + j * SP });
+const P = id => id === RIG ? RIGP : nodes[id];
+const D = (a, b) => Math.hypot(P(a).x - P(b).x, P(a).y - P(b).y);
+const ek = (a, b) => a < b ? a * 1000 + b : b * 1000 + a;
+
+function rng(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// ---------------------------------------------------------------- sprite di luce
+function makeGlow(h, s, l, soft) {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d');
+  const gr = x.createRadialGradient(64, 64, 0, 64, 64, 64);
+  const col = a => `hsla(${h},${s}%,${l}%,${a})`;
+  if (soft) { gr.addColorStop(0, col(1)); gr.addColorStop(.45, col(.62)); gr.addColorStop(1, col(0)); }
+  else { gr.addColorStop(0, col(1)); gr.addColorStop(.25, col(.45)); gr.addColorStop(.6, col(.12)); gr.addColorStop(1, col(0)); }
+  x.fillStyle = gr; x.fillRect(0, 0, 128, 128);
+  return c;
+}
+const glow = (g, sp, x, y, r, a) => { g.globalAlpha = a; g.drawImage(sp, x - r, y - r, r * 2, r * 2); g.globalAlpha = 1; };
+const GLIGHT = makeGlow(0, 0, 100, true);
+const GO = makeGlow(28, 100, 60), GR = makeGlow(0, 100, 60), GWH = makeGlow(40, 100, 92);
+const GC = CH.map(h => makeGlow(h, 100, 62));
+let GP = null;
+
+// ---------------------------------------------------------------- stato
+let level = 1, score = 0, lives = 3, energy = 1, streak = 0;
+let hueRock = 262, huePel = 186;
+let adj = [], nodePel = [], edgePel = new Map(), pelList = [], alive = 0;
+let pipe = [RIG], inPipe = new Uint8Array(N + 1), target = null, prog = 0;
+let mode = 'extend', backtrack = false, hitRetract = false, threatened = false, holdT = 0, pauseT = 0, clearT = 0;
+let creatures = [], parts = [], pops = [];
+let time = 0, shake = 0, flash = 0, headAng = Math.PI / 2, reel = 0, spawnT = 1, manualUntil = -1;
+
+function newLevel(lv) {
+  level = lv;
+  hueRock = (262 + (lv - 1) * 38) % 360;
+  huePel = (186 + (lv - 1) * 47) % 360;
+  GP = makeGlow(huePel, 100, 65);
+  const r = rng(1000 + lv * 7919);
+
+  adj = Array.from({ length: N }, () => []);
+  const link = (a, b) => { adj[a].push(b); adj[b].push(a); };
+  // corsie orizzontali aperte ai due lati, collegate da pozzi verticali sfalsati
+  for (let j = 0; j < NY; j++) for (let i = 0; i < NX - 1; i++) link(j * NX + i, j * NX + i + 1);
+  let prevCols = [ENTRY];
+  for (let j = 0; j < NY - 1; j++) {
+    const cnt = 3 + ((r() * 3) | 0), cols = []; let guard = 0;
+    while (cols.length < cnt && guard++ < 300) {
+      const c = (r() * NX) | 0;
+      if (cols.some(x => Math.abs(x - c) < 3) || prevCols.includes(c)) continue;
+      cols.push(c);
+    }
+    for (const c of cols) link(j * NX + c, (j + 1) * NX + c);
+    prevCols = cols;
+  }
+
+  nodePel = []; edgePel = new Map(); pelList = [];
+  const bigs = new Set();
+  while (bigs.size < 6) { const b = (r() * N) | 0; if (b !== ENTRY && Math.abs(b % NX - ENTRY) + ((b / NX) | 0) > 4) bigs.add(b); }
+  for (let u = 0; u < N; u++) {
+    const p = { x: nodes[u].x, y: nodes[u].y, alive: true, big: bigs.has(u), ph: r() * 6.28 };
+    nodePel[u] = p; pelList.push(p);
+    for (const v of adj[u]) if (u < v) {
+      const q = { x: (nodes[u].x + nodes[v].x) / 2, y: (nodes[u].y + nodes[v].y) / 2, alive: true, big: false, ph: r() * 6.28 };
+      edgePel.set(ek(u, v), q); pelList.push(q);
+    }
+  }
+  alive = pelList.length;
+
+  pipe = [RIG]; inPipe.fill(0); inPipe[RIG] = 1; target = null; prog = 0;
+  mode = 'extend'; backtrack = false; hitRetract = false; holdT = 0; pauseT = .4; clearT = 0;
+  creatures = []; for (let i = 0; i < 3; i++) spawnCreature(true);
+  buildBg();
+}
+
+// ---------------------------------------------------------------- sfondo (disegnato una volta per settore)
+function buildBg() {
+  bg = document.createElement('canvas'); bg.width = cv.width; bg.height = cv.height;
+  const g = bg.getContext('2d'); g.scale(S, S);
+  const r = rng(77 + level * 13), hr = hueRock;
+
+  // cielo
+  let gr = g.createLinearGradient(0, 0, 0, GROUND);
+  gr.addColorStop(0, '#060617'); gr.addColorStop(.45, '#1c1046'); gr.addColorStop(.8, '#7b2a6c'); gr.addColorStop(1, '#ff8a4c');
+  g.fillStyle = gr; g.fillRect(0, 0, W, GROUND);
+  for (let i = 0; i < 150; i++) {
+    const x = r() * W, y = r() * GROUND * .78, a = (.2 + r() * .8) * (1 - y / GROUND), s = r() < .12 ? 1.7 : .9;
+    g.fillStyle = `rgba(255,255,255,${a})`; g.fillRect(x, y, s, s);
+  }
+  g.globalCompositeOperation = 'lighter';
+  gr = g.createRadialGradient(410, GROUND, 0, 410, GROUND, 300);
+  gr.addColorStop(0, 'rgba(255,205,130,.6)'); gr.addColorStop(.4, 'rgba(255,120,90,.18)'); gr.addColorStop(1, 'rgba(255,120,90,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, W, GROUND);
+  g.globalCompositeOperation = 'source-over';
+
+  // pianeta con anello e luna
+  const px = 1052, py = 84;
+  g.strokeStyle = 'rgba(255,215,190,.55)'; g.lineWidth = 3.2;
+  g.beginPath(); g.ellipse(px, py, 62, 13, -.38, Math.PI, Math.PI * 2); g.stroke();
+  gr = g.createRadialGradient(px - 12, py - 14, 2, px, py, 36);
+  gr.addColorStop(0, '#ffd9b0'); gr.addColorStop(.55, '#b9517c'); gr.addColorStop(1, '#34134c');
+  g.fillStyle = gr; g.beginPath(); g.arc(px, py, 34, 0, 6.283); g.fill();
+  g.strokeStyle = 'rgba(255,225,200,.8)';
+  g.beginPath(); g.ellipse(px, py, 62, 13, -.38, 0, Math.PI); g.stroke();
+  gr = g.createRadialGradient(206, 66, 1, 210, 70, 12);
+  gr.addColorStop(0, '#f2eaff'); gr.addColorStop(1, '#6d5a9c');
+  g.fillStyle = gr; g.beginPath(); g.arc(210, 70, 11, 0, 6.283); g.fill();
+
+  // creste rocciose
+  const ridge = (col, lo, hi, step) => {
+    g.fillStyle = col; g.beginPath(); g.moveTo(0, GROUND);
+    for (let x = 0; x <= W + step; x += step) g.lineTo(x + (r() - .5) * step * .5, GROUND - lo - r() * (hi - lo));
+    g.lineTo(W, GROUND); g.closePath(); g.fill();
+  };
+  ridge(`hsl(${hr + 25},42%,24%)`, 18, 58, 46);
+  ridge(`hsl(${hr + 8},48%,12%)`, 6, 30, 30);
+
+  // roccia
+  gr = g.createLinearGradient(0, GROUND, 0, H);
+  gr.addColorStop(0, `hsl(${hr},46%,18%)`); gr.addColorStop(.5, `hsl(${hr + 8},54%,10%)`); gr.addColorStop(1, `hsl(${hr + 16},60%,4%)`);
+  g.fillStyle = gr; g.fillRect(0, GROUND, W, H - GROUND);
+  for (let b = 0; b < 8; b++) {
+    const y0 = GROUND + 26 + b * 72 + r() * 20, th = 16 + r() * 30, f = .004 + r() * .006, ph = r() * 9, am = 6 + r() * 12;
+    g.fillStyle = `hsla(${hr + r() * 40 - 20},50%,${r() < .5 ? 30 : 5}%,.2)`;
+    g.beginPath(); g.moveTo(0, y0);
+    for (let x = 0; x <= W; x += 20) g.lineTo(x, y0 + Math.sin(x * f + ph) * am);
+    for (let x = W; x >= 0; x -= 20) g.lineTo(x, y0 + th + Math.sin(x * f * 1.3 + ph + 1) * am);
+    g.closePath(); g.fill();
+  }
+  for (let i = 0; i < 280; i++) {
+    g.fillStyle = `hsla(${hr + r() * 40 - 20},40%,${r() < .5 ? 34 : 3}%,.07)`;
+    g.beginPath(); g.ellipse(r() * W, GROUND + r() * (H - GROUND), 10 + r() * 46, 5 + r() * 18, r() * 3, 0, 6.283); g.fill();
+  }
+  for (let i = 0; i < 2200; i++) {
+    g.fillStyle = `hsla(${hr + 20},50%,${50 + r() * 30}%,${.05 + r() * .16})`;
+    const s = r() < .2 ? 1.8 : 1; g.fillRect(r() * W, GROUND + r() * (H - GROUND), s, s);
+  }
+  for (let i = 0; i < 50; i++) {
+    const x = r() * W, y = GROUND + 20 + r() * (H - GROUND - 20), s = 2 + r() * 3.5;
+    g.fillStyle = `hsla(${huePel + r() * 40 - 20},90%,72%,${.2 + r() * .3})`;
+    g.beginPath(); g.moveTo(x, y - s); g.lineTo(x + s * .7, y); g.lineTo(x, y + s); g.lineTo(x - s * .7, y); g.closePath(); g.fill();
+  }
+  gr = g.createLinearGradient(0, GROUND, 0, GROUND + 22);
+  gr.addColorStop(0, 'rgba(255,150,95,.42)'); gr.addColorStop(1, 'rgba(255,150,95,0)');
+  g.fillStyle = gr; g.fillRect(0, GROUND, W, 22);
+  g.fillStyle = '#ffb37a'; g.fillRect(0, GROUND - 1, W, 2);
+
+  // cunicoli
+  const tun = new Path2D();
+  tun.moveTo(RIGP.x, GROUND + 4); tun.lineTo(nodes[ENTRY].x, nodes[ENTRY].y);
+  for (let j = 0; j < NY; j++) { tun.moveTo(-60, Y0 + j * SP); tun.lineTo(W + 60, Y0 + j * SP); }
+  for (let u = 0; u < N; u++) for (const v of adj[u]) if (v === u + NX) { tun.moveTo(nodes[u].x, nodes[u].y); tun.lineTo(nodes[v].x, nodes[v].y); }
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  g.strokeStyle = `hsla(${huePel},90%,60%,.09)`; g.lineWidth = TW + 14; g.stroke(tun);
+  g.strokeStyle = `hsl(${hr},42%,31%)`; g.lineWidth = TW + 4; g.stroke(tun);
+  g.strokeStyle = '#04050c'; g.lineWidth = TW; g.stroke(tun);
+  g.strokeStyle = `hsla(${hr - 25},60%,16%,.5)`; g.lineWidth = TW - 15; g.stroke(tun);
+}
+
+// ---------------------------------------------------------------- sonda
+function headPos() {
+  const a = P(pipe[pipe.length - 1]);
+  if (target == null) return { x: a.x, y: a.y };
+  const b = P(target);
+  return { x: a.x + (b.x - a.x) * prog, y: a.y + (b.y - a.y) * prog };
+}
+function pipePoints() {
+  const pts = pipe.map(P);
+  if (target != null && prog > 0) pts.push(headPos());
+  return pts;
+}
+function nearestOnPipe(x, y) {
+  const pts = pipePoints(); let best = 1e9, bs = 0, acc = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1], vx = b.x - a.x, vy = b.y - a.y, l2 = vx * vx + vy * vy, len = Math.sqrt(l2);
+    let t = l2 ? ((x - a.x) * vx + (y - a.y) * vy) / l2 : 0; t = Math.max(0, Math.min(1, t));
+    const d = Math.hypot(x - a.x - vx * t, y - a.y - vy * t);
+    if (d < best) { best = d; bs = acc + len * t; }
+    acc += len;
+  }
+  return { d: best, s: bs, L: acc };
+}
+function bfsNext(start) {
+  const prev = new Int16Array(N).fill(-1), seen = new Uint8Array(N), q = [start]; seen[start] = 1;
+  for (let qi = 0; qi < q.length; qi++) {
+    const u = q[qi];
+    for (const v of adj[u]) {
+      if (seen[v] || inPipe[v]) continue;
+      seen[v] = 1; prev[v] = u;
+      if (nodePel[v].alive || edgePel.get(ek(u, v)).alive) { let w = v; while (prev[w] !== start) w = prev[w]; return w; }
+      q.push(v);
+    }
+  }
+  return null;
+}
+function chooseTarget() {
+  const u = pipe[pipe.length - 1];
+  if (alive <= 0) return;
+  if (u === RIG) { target = ENTRY; prog = 0; return; }
+  // se un mostro sta arrivando nella stessa corsia, gli va incontro con la bocca
+  for (const c of creatures) {
+    if (c.row !== ((u / NX) | 0)) continue;
+    const dx = (nodes[u].x - c.x) * c.dir, nb = u - c.dir;
+    if (dx > 0 && dx < 170 && ((nb / NX) | 0) === c.row && nb >= 0 && nb < N && !inPipe[nb]) { target = nb; prog = 0; return; }
+  }
+  const v = bfsNext(u);
+  if (v != null) { target = v; prog = 0; } else { mode = 'retract'; backtrack = true; }
+}
+// Pilota automatico: un mostro è una minaccia se, proseguendo nella sua corsia, tocca il tubo
+// prima che la bocca riesca a ritirarsi oltre quel punto. Se il primo contatto è la bocca, lo mangia.
+function threat(margin) {
+  const h = headPos(), ext = target != null ? prog * SP : 0;
+  for (const c of creatures) {
+    let best = 1e9, need = 0;
+    if (Math.abs(h.y - c.y) < 14) { const dx = (h.x - c.x) * c.dir; if (dx > -14) { best = dx; need = 0; } }
+    for (let k = 1; k < pipe.length; k++) {
+      const id = pipe[k];
+      if (((id / NX) | 0) !== c.row) continue;
+      const dx = (nodes[id].x - c.x) * c.dir;
+      if (dx > -14 && dx < best) { best = dx; need = ((pipe.length - 1 - k) * SP + ext) / RETRACT; }
+    }
+    if (need > .05 && Math.max(0, best - 13) / c.speed < need + margin) return true;
+  }
+  return false;
+}
+function stepProbe(dt, manual) {
+  let move = (mode === 'retract' ? (hitRetract ? 950 : RETRACT) : 215) * dt, guard = 0;
+  while (move > 1e-4 && guard++ < 60) {
+    if (mode === 'extend') {
+      if (target == null) { if (manual) break; chooseTarget(); if (target == null && mode === 'extend') break; continue; }
+      const len = D(pipe[pipe.length - 1], target), rem = (1 - prog) * len;
+      if (move >= rem) { move -= rem; reel += rem; pipe.push(target); inPipe[target] = 1; target = null; prog = 0; }
+      else { prog += move / len; reel += move; move = 0; }
+    } else {
+      if (target == null) {
+        if (pipe.length <= 1) {
+          if (hitRetract) { hitRetract = false; if (clearT <= 0) pauseT = .6; }
+          backtrack = false; mode = 'extend'; break;
+        }
+        target = pipe.pop(); inPipe[target] = 0; prog = 1;
+      }
+      const len = D(pipe[pipe.length - 1], target), rem = prog * len;
+      if (move >= rem) {
+        move -= rem; reel -= rem; target = null; prog = 0;
+        if (hitRetract) continue;
+        if (manual) break;
+        if (threat(threatened ? 1 : .35)) { threatened = true; continue; }
+        backtrack = false; mode = 'extend';
+      } else { prog -= move / len; reel -= move; move = 0; }
+    }
+  }
+}
+function autoStep(dt) {
+  if (!hitRetract) {
+    if (threat(threatened ? 1 : .35)) { threatened = true; mode = 'retract'; holdT = .2; }
+    else if (holdT > 0) holdT -= dt;
+    else { threatened = false; if (mode === 'retract' && !backtrack) mode = 'extend'; }
+  }
+  stepProbe(dt, false);
+}
+
+// ---------------------------------------------------------------- comandi (tastiera + gamepad)
+const held = new Set(); let order = [];
+const DIRS = { ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1], ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0] };
+addEventListener('keydown', e => {
+  if (DIRS[e.code] || e.code === 'Space') e.preventDefault();
+  if (e.repeat) return;
+  held.add(e.code);
+  if (DIRS[e.code]) { order = order.filter(k => k !== e.code); order.push(e.code); }
+  if (e.code === 'KeyN' && clearT <= 0) newLevel(level + 1);
+});
+addEventListener('keyup', e => { held.delete(e.code); order = order.filter(k => k !== e.code); });
+addEventListener('blur', () => { held.clear(); order = []; });
+function pad() { const gps = navigator.getGamepads ? navigator.getGamepads() : []; for (const p of gps) if (p && p.connected) return p; return null; }
+function rumble(a, ms) { const p = pad(); try { p && p.vibrationActuator && p.vibrationActuator.playEffect('dual-rumble', { duration: ms, strongMagnitude: a, weakMagnitude: a }); } catch (e) { } }
+function readInput() {
+  let dir = null, retract = held.has('Space');
+  if (order.length) { const d = DIRS[order[order.length - 1]]; dir = { x: d[0], y: d[1] }; }
+  const p = pad();
+  if (p) {
+    const b = i => p.buttons[i] && p.buttons[i].pressed;
+    if (b(0) || b(7)) retract = true;
+    const ax = p.axes[0] || 0, ay = p.axes[1] || 0;
+    if (b(12)) dir = { x: 0, y: -1 }; else if (b(13)) dir = { x: 0, y: 1 }; else if (b(14)) dir = { x: -1, y: 0 }; else if (b(15)) dir = { x: 1, y: 0 };
+    else if (Math.max(Math.abs(ax), Math.abs(ay)) > .5) dir = Math.abs(ax) > Math.abs(ay) ? { x: Math.sign(ax), y: 0 } : { x: 0, y: Math.sign(ay) };
+  }
+  return { dir, retract };
+}
+function neighborInDir(id, d) {
+  if (id === RIG) return d.y === 1 ? ENTRY : null;
+  if (id === ENTRY && d.y === -1) return RIG;
+  const i = id % NX + d.x, j = ((id / NX) | 0) + d.y;
+  if (i < 0 || i >= NX || j < 0 || j >= NY) return null;
+  const v = j * NX + i;
+  return adj[id].includes(v) ? v : null;
+}
+function manualStep(dt, inp) {
+  backtrack = false;
+  if (hitRetract) { mode = 'retract'; stepProbe(dt, true); return; }
+  const d = inp.dir, top = pipe[pipe.length - 1];
+  if (inp.retract) mode = 'retract';
+  else if (target != null) {
+    const a = P(top), b = P(target), ex = Math.sign(b.x - a.x), ey = Math.sign(b.y - a.y);
+    if (d && d.x === ex && d.y === ey) mode = 'extend';
+    else if (d && d.x === -ex && d.y === -ey) mode = 'retract';
+    else return;
+  } else {
+    if (!d) return;
+    const nb = neighborInDir(top, d);
+    if (nb == null) return;
+    if (pipe.length >= 2 && nb === pipe[pipe.length - 2]) mode = 'retract';
+    else if (!inPipe[nb]) { target = nb; prog = 0; mode = 'extend'; }
+    else return;
+  }
+  stepProbe(dt, true);
+}
+
+// ---------------------------------------------------------------- creature, particelle
+// I mostri entrano da un lato, percorrono la loro corsia in orizzontale ed escono dall'altro.
+function spawnCreature(onScreen) {
+  const type = (Math.random() * 3) | 0, dir = Math.random() < .5 ? 1 : -1;
+  const row = onScreen ? 1 + ((Math.random() * (NY - 1)) | 0) : (Math.random() * NY) | 0;
+  const x = onScreen ? 80 + Math.random() * (W - 160) : (dir > 0 ? -200 : W + 200);
+  creatures.push({ type, row, dir, x, y: Y0 + row * SP, speed: 58 + type * 18 + Math.random() * 14, age: onScreen ? 0 : 1, ph: Math.random() * 6.28, dx: dir, dy: 0 });
+}
+function burst(x, y, n, h, sp, life, light) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * 6.283, v = sp * (.25 + Math.random());
+    parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: life * (.5 + Math.random() * .5), max: life, h, l: light || 68, size: 1.4 + Math.random() * 2.4 });
+  }
+  if (parts.length > 700) parts.splice(0, parts.length - 700);
+}
+const mult = () => Math.min(5, 1 + ((streak / 20) | 0));
+
+// ---------------------------------------------------------------- aggiornamento
+function update(dt) {
+  time += dt;
+  if (shake > 0) shake = Math.max(0, shake - dt * 42);
+  if (flash > 0) flash = Math.max(0, flash - dt * 2.4);
+  energy -= dt / 90; if (energy <= 0) energy = 1;
+
+  const inp = readInput();
+  if (inp.dir || inp.retract) manualUntil = time + 6;
+  const manual = time < manualUntil;
+  const before = headPos();
+
+  if (clearT > 0) {
+    clearT -= dt; mode = 'retract'; hitRetract = true; stepProbe(dt, false);
+    if (clearT <= 0) { newLevel(level + 1); return; }
+  } else if (pauseT > 0) pauseT -= dt;
+  else if (manual) manualStep(dt, inp);
+  else autoStep(dt);
+
+  const h = headPos();
+  if (target != null) {
+    const a = P(pipe[pipe.length - 1]), b = P(target), want = Math.atan2(b.y - a.y, b.x - a.x);
+    let df = want - headAng; while (df > Math.PI) df -= 6.283; while (df < -Math.PI) df += 6.283;
+    headAng += df * Math.min(1, dt * 22);
+  }
+  const moved = Math.hypot(h.x - before.x, h.y - before.y);
+  if (mode === 'extend' && moved > .5 && Math.random() < .6)
+    parts.push({ x: h.x + Math.cos(headAng) * 16, y: h.y + Math.sin(headAng) * 16, vx: -Math.cos(headAng) * 40 + (Math.random() - .5) * 90, vy: -Math.sin(headAng) * 40 + (Math.random() - .5) * 90, life: .35, max: .35, h: 30, l: 72, size: 1.2 + Math.random() * 1.4 });
+
+  // raccolta cristalli
+  if (!hitRetract) for (const p of pelList) {
+    if (!p.alive || Math.abs(p.x - h.x) > 10 || Math.abs(p.y - h.y) > 10) continue;
+    p.alive = false; alive--; streak++;
+    if (p.big) {
+      const pts = 500 * mult(); score += pts; energy = Math.min(1, energy + .3);
+      burst(p.x, p.y, 34, huePel, 190, .8, 78); shake = Math.max(shake, 5);
+      pops.push({ x: p.x, y: p.y - 14, text: '+' + pts, life: 1.1, h: huePel });
+    } else { score += 10 * mult(); burst(p.x, p.y, 4, huePel, 70, .35, 78); }
+    if (alive <= 0) { clearT = 3.2; score += 1000; }
+  }
+
+  // creature
+  for (let i = creatures.length - 1; i >= 0; i--) {
+    const c = creatures[i];
+    c.age += dt; c.x += c.speed * c.dir * dt;
+    if ((c.dir > 0 && c.x > W + 60) || (c.dir < 0 && c.x < -60)) { creatures.splice(i, 1); continue; }
+    if (hitRetract || clearT > 0 || c.age < .4) continue;
+    if (Math.hypot(c.x - h.x, c.y - h.y) < 20) {
+      const pts = CPTS[c.type] * mult(); score += pts;
+      burst(c.x, c.y, 30, CH[c.type], 210, .7); shake = Math.max(shake, 5);
+      pops.push({ x: c.x, y: c.y - 14, text: '+' + pts, life: 1, h: CH[c.type] });
+      creatures.splice(i, 1); rumble(.3, 90); continue;
+    }
+    const n = nearestOnPipe(c.x, c.y);
+    if (n.L - n.s > 24 && n.d < 13) {
+      lives--; if (lives <= 0) lives = 3;
+      streak = 0; shake = 16; flash = 1; hitRetract = true; mode = 'retract';
+      burst(c.x, c.y, 46, 12, 260, .9); burst(c.x, c.y, 20, CH[c.type], 160, .7);
+      creatures.splice(i, 1); rumble(.9, 320);
+    }
+  }
+  spawnT -= dt;
+  if (spawnT <= 0 && creatures.length < 6 && clearT <= 0) { spawnCreature(false); spawnT = 1 + Math.random() * 1.6; }
+
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.life -= dt;
+    if (p.life <= 0) { parts.splice(i, 1); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 1 - 2.6 * dt; p.vy *= 1 - 2.6 * dt;
+  }
+  for (let i = pops.length - 1; i >= 0; i--) { const p = pops[i]; p.life -= dt; p.y -= 26 * dt; if (p.life <= 0) pops.splice(i, 1); }
+}
+
+// ---------------------------------------------------------------- disegno
+function txt(g, s, x, y, font, color, ls, align) {
+  g.font = font; g.letterSpacing = (ls || 0) + 'px'; g.textAlign = align || 'left'; g.fillStyle = color; g.fillText(s, x, y);
+}
+function drawRig(g, t) {
+  g.save(); g.translate(RIGP.x, GROUND);
+  const dark = '#130a24';
+  g.fillStyle = dark; g.fillRect(-60, -7, 120, 9);
+  g.fillStyle = 'rgba(255,175,115,.85)'; g.fillRect(-60, -7, 120, 1.5);
+  const hw = h => 25 - 19 * h / 80;
+  g.strokeStyle = dark; g.lineCap = 'round'; g.lineWidth = 3.6;
+  g.beginPath(); g.moveTo(-25, -7); g.lineTo(-6, -87); g.moveTo(25, -7); g.lineTo(6, -87); g.stroke();
+  g.lineWidth = 1.8; g.beginPath();
+  for (let i = 0; i < 4; i++) {
+    const h0 = i * 20, h1 = h0 + 20, w0 = hw(h0), w1 = hw(h1);
+    g.moveTo(-w0, -7 - h0); g.lineTo(w1, -7 - h1); g.moveTo(w0, -7 - h0); g.lineTo(-w1, -7 - h1); g.moveTo(-w1, -7 - h1); g.lineTo(w1, -7 - h1);
+  }
+  g.stroke();
+  g.strokeStyle = 'rgba(255,150,100,.55)'; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(-26.5, -7); g.lineTo(-7.5, -87); g.stroke();
+  g.fillStyle = dark; g.fillRect(-10, -94, 20, 8);
+  // cabina
+  g.fillRect(32, -29, 26, 22); g.fillRect(50, -40, 2, 12);
+  g.fillStyle = `hsl(${huePel},100%,72%)`; g.fillRect(37, -24, 9, 6);
+  // bobina e tubo
+  g.strokeStyle = '#ff9d3c'; g.lineWidth = 2.4;
+  g.beginPath(); g.moveTo(-40, -32); g.lineTo(0, -90); g.lineTo(0, 0); g.stroke();
+  g.fillStyle = dark; g.beginPath(); g.arc(-40, -20, 13, 0, 6.283); g.fill();
+  g.strokeStyle = '#ff9d3c'; g.lineWidth = 2; g.beginPath(); g.arc(-40, -20, 10, 0, 6.283); g.stroke();
+  g.lineWidth = 1.5; g.beginPath();
+  for (let i = 0; i < 3; i++) { const a = reel / 10 + i * 2.094; g.moveTo(-40, -20); g.lineTo(-40 + Math.cos(a) * 10, -20 + Math.sin(a) * 10); }
+  g.stroke();
+  // luce di segnalazione
+  const bl = .5 + .5 * Math.sin(t * 5);
+  g.fillStyle = `rgba(255,70,70,${.5 + .5 * bl})`; g.beginPath(); g.arc(0, -97, 2.6, 0, 6.283); g.fill();
+  g.globalCompositeOperation = 'lighter';
+  glow(g, GR, 0, -97, 20, .3 + .6 * bl); glow(g, GP, 41, -21, 20, .55); glow(g, GO, 0, -4, 40, .5);
+  g.globalCompositeOperation = 'source-over';
+  g.restore();
+}
+function eyes(g, x, oy, r) {
+  for (const s of [-1, 1]) {
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(x, oy * s, r, 0, 6.283); g.fill();
+    g.fillStyle = '#0a0618'; g.beginPath(); g.arc(x + r * .4, oy * s, r * .5, 0, 6.283); g.fill();
+  }
+}
+function drawCreature(g, c, t) {
+  const k = Math.min(1, c.age / .4), h = CH[c.type], ang = Math.atan2(c.dy, c.dx);
+  g.globalCompositeOperation = 'lighter'; glow(g, GC[c.type], c.x, c.y, 34, .6 * k); g.globalCompositeOperation = 'source-over';
+  g.save(); g.translate(c.x, c.y); g.scale(k, k); g.rotate(ang);
+  const body = (r0) => { const gr = g.createRadialGradient(2, -3, 1, 0, 0, r0 + 2); gr.addColorStop(0, `hsl(${h},100%,90%)`); gr.addColorStop(.55, `hsl(${h},95%,62%)`); gr.addColorStop(1, `hsl(${h},90%,34%)`); return gr; };
+  if (c.type === 0) {                       // medusa
+    g.strokeStyle = `hsla(${h},100%,72%,.85)`; g.lineWidth = 2; g.lineCap = 'round';
+    for (let i = -1; i <= 1; i++) { g.beginPath(); g.moveTo(-6, i * 5); for (let s = 1; s <= 4; s++) g.lineTo(-6 - s * 4, i * 5 + Math.sin(t * 9 + c.ph + s * 1.1 + i) * 2.8); g.stroke(); }
+    g.beginPath();
+    for (let i = 0; i <= 18; i++) { const a = i / 18 * 6.283, rr = 10.5 * (1 + .1 * Math.sin(a * 3 + t * 7 + c.ph)); i ? g.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : g.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+    g.closePath(); g.fillStyle = body(10.5); g.fill(); eyes(g, 3.5, 4.2, 2.9);
+  } else if (c.type === 1) {                // riccio
+    g.save(); g.rotate(t * 3 + c.ph); g.beginPath();
+    for (let i = 0; i < 18; i++) { const a = i / 18 * 6.283, rr = i % 2 ? 7.5 : 13.5; i ? g.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : g.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+    g.closePath(); g.fillStyle = body(12); g.fill(); g.restore();
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(1, 0, 4.4, 0, 6.283); g.fill();
+    g.fillStyle = '#0a0618'; g.beginPath(); g.arc(2.8, 0, 2.2, 0, 6.283); g.fill();
+  } else {                                  // larva
+    for (let s = 3; s >= 1; s--) { g.fillStyle = `hsl(${h},90%,${58 - s * 8}%)`; g.beginPath(); g.arc(-s * 6.5, Math.sin(t * 10 + c.ph + s * 1.3) * 2.4, 8.5 - s * 1.4, 0, 6.283); g.fill(); }
+    g.fillStyle = body(9.5); g.beginPath(); g.arc(0, 0, 9.5, 0, 6.283); g.fill(); eyes(g, 3.5, 3.9, 2.7);
+  }
+  g.restore();
+}
+function drawHead(g, h, t) {
+  g.globalCompositeOperation = 'lighter'; glow(g, GO, h.x, h.y, 62, .75); glow(g, GWH, h.x, h.y, 26, .5); g.globalCompositeOperation = 'source-over';
+  g.save(); g.translate(h.x, h.y); g.rotate(headAng);
+  g.beginPath(); g.moveTo(5, -10.5); g.lineTo(23, 0); g.lineTo(5, 10.5); g.closePath();
+  let gr = g.createLinearGradient(0, -10, 0, 10); gr.addColorStop(0, '#f4f6ff'); gr.addColorStop(.5, '#9aa3c4'); gr.addColorStop(1, '#3a4060');
+  g.fillStyle = gr; g.fill();
+  g.save(); g.clip(); g.strokeStyle = 'rgba(20,22,40,.75)'; g.lineWidth = 2;
+  const off = (t * 34) % 7;
+  for (let x = -6 + off; x < 30; x += 7) { g.beginPath(); g.moveTo(x, -12); g.lineTo(x - 7, 12); g.stroke(); }
+  g.restore();
+  gr = g.createLinearGradient(0, -11, 0, 11); gr.addColorStop(0, '#ffd08a'); gr.addColorStop(.5, '#ff8f2e'); gr.addColorStop(1, '#a8420e');
+  g.fillStyle = gr; g.beginPath(); g.roundRect(-11, -11, 17, 22, 6); g.fill();
+  g.fillStyle = '#2a1608'; g.fillRect(3, -11, 2.5, 22);
+  g.fillStyle = `hsl(${huePel},100%,80%)`; g.beginPath(); g.arc(-3.5, 0, 3.6, 0, 6.283); g.fill();
+  g.restore();
+}
+function drawLight(h) {
+  const g = lctx; g.setTransform(S / 2, 0, 0, S / 2, 0, 0); g.globalCompositeOperation = 'source-over';
+  g.clearRect(0, 0, W, H);
+  const gr = g.createLinearGradient(0, GROUND, 0, GROUND + 90);
+  gr.addColorStop(0, 'rgba(2,2,10,0)'); gr.addColorStop(1, 'rgba(2,2,10,.64)');
+  g.fillStyle = gr; g.fillRect(0, GROUND, W, H - GROUND);
+  g.globalCompositeOperation = 'destination-out';
+  glow(g, GLIGHT, h.x, h.y, 250, 1);
+  for (let i = 1; i < pipe.length; i += 2) { const p = P(pipe[i]); glow(g, GLIGHT, p.x, p.y, 74, .3); }
+  for (const c of creatures) glow(g, GLIGHT, c.x, c.y, 84, .55);
+  for (const p of pelList) if (p.alive && p.big) glow(g, GLIGHT, p.x, p.y, 78, .55);
+}
+function draw() {
+  const g = ctx, t = time, h = headPos();
+  const sx = shake ? (Math.random() - .5) * shake : 0, sy = shake ? (Math.random() - .5) * shake : 0;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+  g.fillStyle = '#03040a'; g.fillRect(0, 0, cv.width, cv.height);
+  g.drawImage(bg, sx * S, sy * S);
+  g.setTransform(S, 0, 0, S, sx * S, sy * S);
+
+  // cristalli (nucleo) sotto il buio, alone sopra
+  g.fillStyle = `hsl(${huePel},100%,80%)`;
+  for (const p of pelList) if (p.alive && !p.big) { g.beginPath(); g.arc(p.x, p.y, 2.7, 0, 6.283); g.fill(); }
+  drawLight(h);
+  g.save(); g.setTransform(1, 0, 0, 1, sx * S, sy * S); g.drawImage(lightCv, 0, 0, cv.width, cv.height); g.restore();
+  g.globalCompositeOperation = 'lighter';
+  for (const p of pelList) if (p.alive) {
+    if (p.big) glow(g, GP, p.x, p.y, 40 + 5 * Math.sin(t * 3 + p.ph), .85);
+    else glow(g, GP, p.x, p.y, 11, .34 + .2 * Math.sin(t * 3 + p.ph));
+  }
+  g.globalCompositeOperation = 'source-over';
+  for (const p of pelList) if (p.alive && p.big) {
+    g.save(); g.translate(p.x, p.y + Math.sin(t * 2.4 + p.ph) * 1.5);
+    const w = 6.5 * (.55 + .45 * Math.abs(Math.cos(t * 1.8 + p.ph)));
+    g.fillStyle = `hsl(${huePel},100%,68%)`; g.beginPath(); g.moveTo(0, -10); g.lineTo(w, 0); g.lineTo(0, 10); g.lineTo(-w, 0); g.closePath(); g.fill();
+    g.fillStyle = '#fff'; g.beginPath(); g.moveTo(0, -10); g.lineTo(w * .45, 0); g.lineTo(0, 10); g.closePath(); g.fill();
+    g.restore();
+  }
+
+  drawRig(g, t);
+
+  // tubo
+  const pts = pipePoints();
+  if (pts.length > 1) {
+    const path = new Path2D(); path.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) path.lineTo(pts[i].x, pts[i].y);
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    g.globalCompositeOperation = 'lighter';
+    g.strokeStyle = hitRetract && clearT <= 0 ? 'rgba(255,50,50,.3)' : 'rgba(255,130,40,.17)'; g.lineWidth = 22; g.stroke(path);
+    g.globalCompositeOperation = 'source-over';
+    g.strokeStyle = '#2a1608'; g.lineWidth = 10; g.stroke(path);
+    g.strokeStyle = hitRetract && clearT <= 0 ? '#ff5a4a' : '#ff9d3c'; g.lineWidth = 6; g.stroke(path);
+    g.strokeStyle = 'rgba(255,244,210,.92)'; g.lineWidth = 2; g.setLineDash([5, 13]); g.lineDashOffset = t * 70; g.stroke(path); g.setLineDash([]);
+  }
+  for (const c of creatures) {
+    drawCreature(g, c, t);
+    if (c.x < -8 || c.x > W + 8) {          // avviso: mostro in arrivo da questo lato
+      const ex = c.dir > 0 ? 18 : W - 18, a = .35 + .65 * Math.abs(Math.sin(t * 8 + c.ph));
+      g.strokeStyle = `hsla(${CH[c.type]},100%,72%,${a})`; g.lineWidth = 3.5; g.lineCap = 'round'; g.lineJoin = 'round';
+      g.beginPath(); g.moveTo(ex - 5 * c.dir, c.y - 8); g.lineTo(ex + 4 * c.dir, c.y); g.lineTo(ex - 5 * c.dir, c.y + 8); g.stroke();
+      g.globalCompositeOperation = 'lighter'; glow(g, GC[c.type], ex, c.y, 26, a * .7); g.globalCompositeOperation = 'source-over';
+    }
+  }
+  drawHead(g, h, t);
+
+  g.globalCompositeOperation = 'lighter';
+  for (const p of parts) { g.fillStyle = `hsla(${p.h},100%,${p.l}%,${Math.min(1, p.life / p.max * 1.4)})`; g.beginPath(); g.arc(p.x, p.y, p.size, 0, 6.283); g.fill(); }
+  g.globalCompositeOperation = 'source-over';
+  for (const p of pops) {
+    g.globalAlpha = Math.min(1, p.life * 2.2);
+    g.font = `700 17px ${FONT}`; g.letterSpacing = '1px'; g.textAlign = 'center';
+    g.lineWidth = 4; g.strokeStyle = 'rgba(4,4,14,.85)'; g.strokeText(p.text, p.x, p.y);
+    g.fillStyle = `hsl(${p.h},100%,80%)`; g.fillText(p.text, p.x, p.y);
+  }
+  g.globalAlpha = 1;
+
+  // sovrapposizioni a schermo fisso
+  g.setTransform(S, 0, 0, S, 0, 0);
+  if (flash > 0) { g.fillStyle = `rgba(255,40,40,${flash * .28})`; g.fillRect(0, 0, W, H); }
+  let gr = g.createRadialGradient(W / 2, H / 2, H * .45, W / 2, H / 2, H * .95);
+  gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,.55)');
+  g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  drawHud(g, t);
+}
+function drawHud(g, t) {
+  let gr = g.createLinearGradient(0, 0, 0, 58);
+  gr.addColorStop(0, 'rgba(4,4,14,.9)'); gr.addColorStop(.7, 'rgba(4,4,14,.55)'); gr.addColorStop(1, 'rgba(4,4,14,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, W, 58);
+  const lab = `600 11px ${FONT}`, val = `700 22px ${FONT}`, dim = 'rgba(200,205,255,.55)';
+
+  g.save(); g.shadowColor = '#ff8a2e'; g.shadowBlur = 14;
+  g.fillStyle = '#ffb060'; g.beginPath(); g.moveTo(24, 14); g.lineTo(42, 14); g.lineTo(33, 36); g.closePath(); g.fill();
+  txt(g, 'TRIVELLA', 54, 34, `700 24px ${FONT}`, '#ffb060', 7);
+  g.restore();
+
+  txt(g, 'PUNTI', 300, 16, lab, dim, 3); txt(g, String(score).padStart(6, '0'), 300, 39, val, '#f2f4ff', 2);
+  txt(g, 'SETTORE', 470, 16, lab, dim, 3); txt(g, String(level).padStart(2, '0'), 470, 39, val, '#f2f4ff', 2);
+  const m = mult();
+  txt(g, 'COMBO', 600, 16, lab, dim, 3); txt(g, '×' + m, 600, 39, val, m > 1 ? `hsl(${huePel},100%,72%)` : 'rgba(242,244,255,.45)', 2);
+
+  txt(g, 'ENERGIA', 760, 16, lab, dim, 3);
+  const segs = 22, lit = Math.ceil(energy * segs), low = energy < .25;
+  for (let i = 0; i < segs; i++) {
+    g.fillStyle = i < lit ? (low ? '#ff5a4a' : `hsl(${huePel},100%,${62 + 14 * (i / segs)}%)`) : 'rgba(200,205,255,.14)';
+    g.fillRect(760 + i * 10, 26, 7, 12);
+  }
+  txt(g, 'SONDE', 1080, 16, lab, dim, 3);
+  for (let i = 0; i < 3; i++) {
+    const x = 1088 + i * 30, on = i < lives;
+    g.fillStyle = on ? '#ff9d3c' : 'rgba(200,205,255,.16)';
+    g.beginPath(); g.roundRect(x - 8, 24, 13, 14, 4); g.fill();
+    g.beginPath(); g.moveTo(x + 6, 24); g.lineTo(x + 15, 31); g.lineTo(x + 6, 38); g.closePath();
+    g.fillStyle = on ? '#dfe3ff' : 'rgba(200,205,255,.16)'; g.fill();
+  }
+
+  const manual = time < manualUntil;
+  txt(g, manual ? 'CONTROLLO MANUALE' : 'DEMO AUTOMATICA', 24, H - 16, `700 12px ${FONT}`, manual ? '#ffb060' : `hsl(${huePel},100%,72%)`, 3);
+  txt(g, 'FRECCE / WASD / GAMEPAD  muovi     SPAZIO / A  ritrai     N  cambia settore', 200, H - 16, `500 12px ${FONT}`, 'rgba(200,205,255,.5)', 1.5);
+  txt(g, 'ANTEPRIMA GRAFICA', W - 24, H - 16, `600 12px ${FONT}`, 'rgba(200,205,255,.4)', 3, 'right');
+
+  // titolo iniziale / fine settore
+  let a = 0, big = '', small = '';
+  if (t < 3.4) { a = Math.min(1, (3.4 - t) / .8); big = 'TRIVELLA'; small = 'ANTEPRIMA GRAFICA'; }
+  else if (clearT > 0) { a = Math.min(1, (3.2 - clearT) / .4, clearT / .5); big = 'SETTORE ' + String(level).padStart(2, '0'); small = 'COMPLETATO   +1000'; }
+  if (a > 0) {
+    g.globalAlpha = a;
+    gr = g.createLinearGradient(0, 300, 0, 500);
+    gr.addColorStop(0, 'rgba(3,3,12,0)'); gr.addColorStop(.3, 'rgba(3,3,12,.78)'); gr.addColorStop(.7, 'rgba(3,3,12,.78)'); gr.addColorStop(1, 'rgba(3,3,12,0)');
+    g.fillStyle = gr; g.fillRect(0, 300, W, 200);
+    g.save(); g.shadowColor = '#ff7a1e'; g.shadowBlur = 40;
+    txt(g, big, W / 2 + 12, 420, `700 88px ${FONT}`, '#ffb868', 24, 'center');
+    g.restore();
+    txt(g, small, W / 2 + 4, 456, `600 16px ${FONT}`, `hsl(${huePel},100%,76%)`, 8, 'center');
+    g.globalAlpha = 1;
+  }
+  g.textAlign = 'left'; g.letterSpacing = '0px';
+}
+
+// ---------------------------------------------------------------- avvio
+function fit() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2), k = Math.min(innerWidth / W, innerHeight / H);
+  cv.style.width = Math.round(W * k) + 'px'; cv.style.height = Math.round(H * k) + 'px';
+  S = Math.max(.25, Math.min(k * dpr, 2.5));
+  cv.width = Math.round(W * S); cv.height = Math.round(H * S);
+  lightCv.width = Math.round(W * S / 2); lightCv.height = Math.round(H * S / 2);
+}
+addEventListener('resize', () => { fit(); buildBg(); });
+fit(); newLevel(1);
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 1 / 30); last = now;
+  update(dt); draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+// ganci di prova: stato e avanzamento manuale della simulazione
+window.__trivella = {
+  state: () => ({ level, score, lives, alive, pipe: pipe.length, creatures: creatures.length, mode, manual: time < manualUntil, time }),
+  step: s => { for (let i = 0, n = Math.round(s * 60); i < n; i++) update(1 / 60); draw(); return window.__trivella.state(); }
+};
+})();
+</script>
+</body>
+</html>
