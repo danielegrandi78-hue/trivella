@@ -12,7 +12,7 @@ const DIRS = {
 };
 const MENU = {
   ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
-  Enter: 'confirm', NumpadEnter: 'confirm', Space: 'confirm', Backspace: 'back', KeyP: 'pause', F11: 'fullscreen'
+  Enter: 'confirm', NumpadEnter: 'confirm', Space: 'confirm', KeyP: 'pause', F11: 'fullscreen'
 };
 const CAPTURED = new Set([...Object.keys(DIRS), 'Space', 'F11', 'Backspace']);
 
@@ -80,10 +80,13 @@ export class Input {
   }
 
   poll(dt) {
-    const e = this.edge = { up: false, down: false, left: false, right: false, confirm: false, back: false, pause: false, fullscreen: false, any: false };
+    const e = this.edge = { up: false, down: false, left: false, right: false, confirm: false, back: false, pause: false, fullscreen: false, any: false, del: false, digits: [] };
     for (const code of this.queue) {
       e.any = true;
-      if (code === 'Escape') { e.back = true; e.pause = true; }
+      const digit = /^(?:Digit|Numpad)(\d)$/.exec(code);
+      if (digit) e.digits.push(digit[1]);               // per scrivere il codice di una partita
+      else if (code === 'Escape') { e.back = true; e.pause = true; }
+      else if (code === 'Backspace') e.del = true;
       else if (MENU[code]) e[MENU[code]] = true;
     }
     this.queue.length = 0;

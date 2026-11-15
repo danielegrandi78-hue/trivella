@@ -1,0 +1,14 @@
+# Server delle sfide online di Trivella.
+#   prova in locale:  npx wrangler dev --config server/wrangler.toml --port 8787
+#   pubblicazione:    npx wrangler deploy --config server/wrangler.toml
+name = "trivella-online"
+main = "src/worker.js"
+compatibility_date = "2025-06-01"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

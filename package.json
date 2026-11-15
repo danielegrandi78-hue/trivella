@@ -8,10 +8,13 @@
   "scripts": {
     "start": "electron .",
     "icons": "electron tools/make-icons.js",
-    "dist": "electron-packager . Trivella --platform=win32 --arch=x64 --out=dist --overwrite --icon=build/icon.ico --ignore=\"^/dist\" --ignore=\"^/anteprima.html\" --ignore=\"^/.claude\" --ignore=\"^/.github\" --ignore=\"^/.git\" --ignore=\"^/tools\" --ignore=\"^/build\""
+    "dist": "electron-packager . Trivella --platform=win32 --arch=x64 --out=dist --overwrite --icon=build/icon.ico --ignore=\"^/dist\" --ignore=\"^/anteprima.html\" --ignore=\"^/.claude\" --ignore=\"^/.github\" --ignore=\"^/.git\" --ignore=\"^/tools\" --ignore=\"^/build\" --ignore=\"^/server\" --ignore=\"^/.wrangler\"",
+    "server": "wrangler dev --config server/wrangler.toml --port 8787",
+    "server:deploy": "wrangler deploy --config server/wrangler.toml"
   },
   "devDependencies": {
     "@electron/packager": "^20.3.0",
-    "electron": "^45.3.1"
+    "electron": "^45.3.1",
+    "wrangler": "^4.162.0"
   }
 }

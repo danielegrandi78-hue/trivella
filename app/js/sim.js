@@ -1,7 +1,7 @@
 // Logica di gioco: sonda, tubo, mostri, cristalli, potenziamenti, punteggio.
 // Non disegna nulla e non suona nulla: segnala gli eventi con emit(nome).
 // Nota: ENTRY non è fisso, cambia a ogni settore (vedi setEntry in config.js).
-import { W, NX, NY, SP, Y0, N, RIG, ENTRY, EXTEND, RETRACT, HIT_RETRACT, MAX_LIVES, EXTRA_LIFE_EVERY, KINDS, POWERS, nodes, P, D, ek, rowOf } from './config.js';
+import { W, NX, NY, SP, Y0, N, RIG, ENTRY, EXTEND, RETRACT, HIT_RETRACT, MAX_LIVES, EXTRA_LIFE_EVERY, MONSTERS_PER_LIFE, TURBO_EXTEND, TURBO_RETRACT, KINDS, POWERS, nodes, P, D, ek, rowOf } from './config.js';
 import { generateLevel, TYPES } from './level.js';
 
 const TURN_GRACE = 34;     // px oltre l'incrocio entro cui una svolta premuta in ritardo viene ancora presa
@@ -13,18 +13,21 @@ export class Game {
     this.newGame(true);
   }
 
-  // attract = demo automatica dietro il menu
-  newGame(attract) {
+  // attract = demo automatica dietro il menu.
+  // opts (sfida online): { seed, types } fissano la stessa sequenza di settori per entrambi i giocatori.
+  newGame(attract, opts) {
     this.attract = !!attract;
-    this.score = 0; this.lives = 3; this.nextLife = EXTRA_LIFE_EVERY;
-    this.parts = []; this.pops = [];
-    this.seed = (Math.random() * 1e9) | 0;      // ogni partita ha settori diversi
+    this.score = 0; this.lives = 3; this.nextLife = EXTRA_LIFE_EVERY; this.eaten = 0;
+    this.parts = []; this.pops = []; this.gifts = [];
+    this.seed = opts && opts.seed != null ? opts.seed : (Math.random() * 1e9) | 0;      // ogni partita ha settori diversi
+    this.fixedTypes = opts && opts.types ? opts.types : null;
     this.typeQueue = []; this.lastType = -1;
     this.startLevel(1);
   }
 
   // Pesca il tipo di schermo: li passa tutti in ordine casuale prima di ripeterne uno.
   nextType() {
+    if (this.fixedTypes) return this.fixedTypes[(this.level - 1) % this.fixedTypes.length];
     if (!this.typeQueue.length) {
       const q = TYPES.map((_, i) => i);
       for (let i = q.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0;[q[i], q[j]] = [q[j], q[i]]; }
@@ -43,10 +46,10 @@ export class Game {
     this.mode = 'extend'; this.heading = { x: 0, y: 1 };
     this.backtrack = false; this.hitRetract = false; this.threatened = false; this.holdT = 0;
     this.energy = 1; this.creatures = []; this.spawnT = 1;
-    this.power = null; this.powerT = 9 + Math.random() * 6; this.fx = { gelo: 0, scudo: 0, calamita: 0 };
+    this.power = null; this.powerT = 9 + Math.random() * 6; this.fx = { gelo: 0, scudo: 0, calamita: 0, turbo: 0 };
     this.phase = 'ready'; this.phaseT = this.attract ? .4 : 1.9; this.msg = ''; this.bonus = 0;
     this.headAng = Math.PI / 2; this.reel = 0; this.shake = 0; this.flash = 0; this.motion = 0;
-    this.blocked = null; this.blockedAt = -9;
+    this.blocked = null; this.blockedAt = -9; this.snapKey = '';
     for (let i = 0; i < 3; i++) this.spawnCreature(true);
     this.bgKey++;
     this.emit('ready');
@@ -88,21 +91,22 @@ export class Game {
     if (this.parts.length > 700) this.parts.splice(0, this.parts.length - 700);
   }
   pop(x, y, text, h) { this.pops.push({ x, y, text, life: 1.1, h }); }
+  gainLife() {
+    if (this.attract || this.lives >= MAX_LIVES) return;
+    this.lives++; this.emit('life');
+    const h = this.headPos(); this.pop(h.x, h.y - 30, 'SONDA EXTRA', 48);
+  }
   addScore(pts) {
     this.score += pts;
-    while (!this.attract && this.score >= this.nextLife) {
-      this.nextLife += EXTRA_LIFE_EVERY;
-      if (this.lives < MAX_LIVES) {
-        this.lives++; this.emit('life');
-        const h = this.headPos(); this.pop(h.x, h.y - 30, 'SONDA EXTRA', 48);
-      }
-    }
+    while (!this.attract && this.score >= this.nextLife) { this.nextLife += EXTRA_LIFE_EVERY; this.gainLife(); }
   }
+  // Mostro mangiato con la bocca: ogni MONSTERS_PER_LIFE si guadagna una sonda.
+  countEaten() { if (!this.attract && ++this.eaten % MONSTERS_PER_LIFE === 0) this.gainLife(); }
   loseLife(msg) {
     if (this.phase !== 'play') return;
     this.lives--; this.phase = 'hit'; this.phaseT = .9; this.msg = msg;
     this.shake = 16; this.flash = 1;
-    this.fx.gelo = this.fx.scudo = this.fx.calamita = 0;
+    this.fx.gelo = this.fx.scudo = this.fx.calamita = this.fx.turbo = 0;
     // i cristalli in volo verso la bocca tornano al loro posto
     for (const p of this.L.pelList) if (p.pulled && p.alive) { p.x = p.hx; p.y = p.hy; p.pulled = false; }
     this.emit('hit');
@@ -118,7 +122,8 @@ export class Game {
     return this.L.adj[id].includes(v) ? v : null;
   }
   stepProbe(dt, manual) {
-    let move = (this.mode === 'retract' ? (this.hitRetract ? HIT_RETRACT : RETRACT) : EXTEND) * dt, guard = 0;
+    const turbo = this.fx.turbo > 0;
+    let move = (this.mode === 'retract' ? (this.hitRetract ? HIT_RETRACT : RETRACT * (turbo ? TURBO_RETRACT : 1)) : EXTEND * (turbo ? TURBO_EXTEND : 1)) * dt, guard = 0;
     while (move > 1e-4 && guard++ < 60) {
       const top = this.pipe[this.pipe.length - 1];
       if (this.mode === 'extend') {
@@ -261,10 +266,11 @@ export class Game {
 
   // ------------------------------------------------------------ mostri
   // Entrano da un lato, percorrono la loro corsia ed escono dall'altro.
-  spawnCreature(onScreen) {
-    const prm = this.prm, lv = this.level;
-    let kind = 3;
-    if (Math.random() >= prm.armored) {
+  // gift = tipo di mostro mandato dall'avversario (sfida online): entra comunque, un po' più veloce.
+  spawnCreature(onScreen, gift) {
+    const prm = this.prm, lv = this.level, forced = gift != null;
+    let kind = forced ? gift : 3;
+    if (!forced && Math.random() >= prm.armored) {
       const w = [3, 2 + lv * .3, .5 + lv * .5]; let x = Math.random() * (w[0] + w[1] + w[2]);
       kind = x < w[0] ? 0 : x < w[0] + w[1] ? 1 : 2;
     }
@@ -279,9 +285,9 @@ export class Game {
         const id = this.pipe[k];
         if (rowOf(id) === row && (dir > 0 ? nodes[id].x : W - nodes[id].x) < 270) fair = false;
       }
-      if (!fair && !onScreen) continue;
+      if (!fair && !onScreen && !(forced && tries === 7)) continue;
       const x = onScreen ? 80 + Math.random() * (W - 160) : (dir > 0 ? -200 : W + 200);
-      this.creatures.push({ kind, row, dir, x, y: Y0 + row * SP, speed: KINDS[kind].speed * prm.speedMul * (.92 + Math.random() * .16), age: onScreen ? 0 : 1, ph: Math.random() * 6.28 });
+      this.creatures.push({ kind, row, dir, x, y: Y0 + row * SP, speed: KINDS[kind].speed * prm.speedMul * (forced ? 1.15 : 1) * (.92 + Math.random() * .16), age: onScreen ? 0 : 1, ph: Math.random() * 6.28 });
       if (!onScreen) this.emit('warn');
       return;
     }
@@ -304,7 +310,7 @@ export class Game {
         if (k.armored && !shield) {
           this.burst(c.x, c.y, 46, 12, 260, .9); this.creatures.splice(i, 1);
           this.loseLife('SONDA DISTRUTTA');
-        } else { this.killCreature(i, k.pts); this.emit('eat'); }
+        } else { this.killCreature(i, k.pts); this.countEaten(); this.emit('eat', c.kind); }
         continue;
       }
       const n = this.nearestOnPipe(c.x, c.y);
@@ -373,6 +379,63 @@ export class Game {
     }
   }
 
+  // ------------------------------------------------------------ sfida online
+  // Dispetto: un mostro mangiato dall'avversario entra poco dopo in questa mappa.
+  queueGift(kind) { if (this.gifts.length < 6 && KINDS[kind]) this.gifts.push({ kind, t: 1 + this.gifts.length * .6 }); }
+
+  // Stato dei cristalli in forma compatta: 6 cristalli per carattere.
+  pelMask() {
+    const pl = this.L.pelList; let out = '';
+    for (let i = 0; i < pl.length; i += 6) { let v = 0; for (let b = 0; b < 6 && i + b < pl.length; b++) if (pl[i + b].alive) v |= 1 << b; out += String.fromCharCode(48 + v); }
+    return out;
+  }
+  setPelMask(m) {
+    const pl = this.L.pelList; let n = 0;
+    for (let i = 0; i < pl.length; i++) { const a = ((m.charCodeAt((i / 6) | 0) - 48) >> (i % 6)) & 1; pl[i].alive = !!a; n += a; }
+    this.L.alive = n;
+  }
+  // Fotografia della partita da mandare all'avversario, che la mostra nella sua metà di schermo.
+  snap() {
+    const L = this.L, key = this.level + ':' + L.alive, r1 = v => Math.round(v * 10) / 10;
+    const s = {
+      t: 's', sd: this.seed, lv: this.level, ty: L.type,
+      pi: this.pipe.slice(1), tg: this.target, pg: Math.round(this.prog * 1000) / 1000, mo: this.motion, ha: Math.round(this.headAng * 100) / 100,
+      cr: this.creatures.map(c => [c.kind, c.row, c.dir, Math.round(c.x), Math.round(c.speed)]),
+      pw: this.power ? [this.power.kind, this.power.x, this.power.y, r1(this.power.life)] : 0,
+      fx: [r1(this.fx.gelo), r1(this.fx.scudo), r1(this.fx.calamita), r1(this.fx.turbo)],
+      sc: this.score, li: this.lives, ea: this.eaten, en: Math.round(this.energy * 100) / 100, ph: this.phase, pt: r1(this.phaseT), ms: this.msg, bo: this.bonus
+    };
+    if (key !== this.snapKey) { this.snapKey = key; s.pm = this.pelMask(); }      // i cristalli solo quando cambiano
+    return s;
+  }
+  // Applica una fotografia ricevuta: questa partita diventa la copia di quella dell'avversario.
+  applySnap(s) {
+    if (!this.L || s.sd !== this.seed || s.lv !== this.level || s.ty !== this.L.type) {
+      this.seed = s.sd; this.level = s.lv; this.L = generateLevel(s.lv, s.sd, s.ty); this.prm = this.L.prm;
+      this.bgKey++; this.parts = []; this.pops = [];
+    }
+    if (s.pm) this.setPelMask(s.pm);
+    this.pipe = [RIG].concat(s.pi); this.target = s.tg; this.prog = s.pg; this.motion = s.mo; this.headAng = s.ha;
+    this.creatures = s.cr.map((c, i) => ({ kind: c[0], row: c[1], dir: c[2], x: c[3], y: Y0 + c[1] * SP, speed: c[4], age: 1, ph: i * 1.7 }));
+    this.power = s.pw ? { kind: s.pw[0], x: s.pw[1], y: s.pw[2], life: s.pw[3], ph: 0 } : null;
+    this.fx.gelo = s.fx[0]; this.fx.scudo = s.fx[1]; this.fx.calamita = s.fx[2]; this.fx.turbo = s.fx[3] || 0;
+    if (s.ph === 'hit' && this.phase !== 'hit') { this.shake = 12; this.flash = 1; }
+    this.score = s.sc; this.lives = s.li; this.eaten = s.ea | 0; this.energy = s.en; this.phase = s.ph; this.phaseT = s.pt; this.msg = s.ms; this.bonus = s.bo;
+  }
+  // Tra una fotografia e l'altra la copia prosegue da sola, così il movimento resta fluido.
+  puppetTick(dt) {
+    this.time += dt;
+    if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 42);
+    if (this.flash > 0) this.flash = Math.max(0, this.flash - dt * 2.4);
+    const slow = this.fx.gelo > 0 ? .25 : 1;
+    for (const c of this.creatures) c.x += c.speed * slow * c.dir * dt;
+    if (this.target != null) {
+      if (this.motion > 0) { const d = Math.min(1 - this.prog, EXTEND * (this.fx.turbo > 0 ? TURBO_EXTEND : 1) * dt / SP); this.prog += d; this.reel += d * SP; }
+      else if (this.motion < 0) { const d = Math.min(this.prog, RETRACT * dt / SP); this.prog -= d; this.reel -= d * SP; }
+    }
+    if (this.phaseT > 0) this.phaseT -= dt;
+  }
+
   // ------------------------------------------------------------ ciclo principale
   update(dt, inp) {
     this.time += dt;
@@ -392,6 +455,7 @@ export class Game {
         if (this.phase !== 'play') break;
         this.updatePower(dt);
         this.updateCreatures(dt, true);
+        for (let i = this.gifts.length - 1; i >= 0; i--) if ((this.gifts[i].t -= dt) <= 0) { this.spawnCreature(false, this.gifts[i].kind); this.gifts.splice(i, 1); }
         this.spawnT -= dt;
         if (this.spawnT <= 0 && this.creatures.length < this.prm.maxCreatures) {
           this.spawnCreature(false);

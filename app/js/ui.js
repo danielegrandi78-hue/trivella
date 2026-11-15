@@ -1,12 +1,26 @@
 // Schermate sovrapposte al gioco: titolo, menu, opzioni, fine partita.
 // Tutte disegnano in coordinate logiche 1280x720 (il contesto è già scalato).
-import { W, H, FONT, PAUSE_BTN } from './config.js';
+import { W, H, FONT, PAUSE_BTN, MONSTERS_PER_LIFE } from './config.js';
 import { txt } from './render.js';
 
 const ORANGE = '#ffb868', DIM = 'rgba(200,205,255,.55)', WHITE = '#f2f4ff', CYAN = 'hsl(186,100%,74%)';
 
 // Posizione delle voci dei menu: [y della prima voce, passo]. Serve anche per riconoscere i tocchi.
-export const MENU_POS = { title: [392, 48], pause: [340, 48], options: [320, 52] };
+export const MENU_POS = { title: [392, 48], pause: [340, 48], options: [320, 52], multi: [330, 54], vsmenu: [350, 52], vsend: [520, 50] };
+
+// Schermo diviso: tabellone alto VS_HUD e, sotto, due riquadri a metà scala uno accanto all'altro.
+// Con tastiera o gamepad il blocco è centrato; a tocco sta in alto e lascia sotto lo spazio ai pollici.
+export const VS_HUD = 140, VS_SCALE = .5;
+export const vsTop = touch => touch ? 0 : Math.round((H - VS_HUD - H * VS_SCALE) / 2);
+// Tastierino per il codice della partita: 3 colonne x 4 righe.
+export const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '<', '0', 'OK'];
+const KP = { x: W / 2 - 165, y: 330, w: 110, h: 68 };
+export function keypadHit(x, y) {
+  const c = Math.floor((x - KP.x) / KP.w), r = Math.floor((y - KP.y) / KP.h);
+  return c >= 0 && c < 3 && r >= 0 && r < 4 ? r * 3 + c : -1;
+}
+// Pulsante "annulla / indietro" in basso, per gli schermi a tocco.
+export const cancelHit = (x, y) => Math.abs(x - W / 2) < 170 && Math.abs(y - 655) < 30;
 // Indice della voce toccata, oppure -1.
 export function menuHit(screen, count, x, y) {
   const pos = MENU_POS[screen];
@@ -74,7 +88,7 @@ export function title(g, t, items, sel, hi, touch) {
   menu(g, t, items, sel, MENU_POS.title[0], MENU_POS.title[1]);
   if (hi > 0) txt(g, 'RECORD  ' + String(hi).padStart(6, '0'), W / 2 + 2, 392 + items.length * 48 + 22, `600 15px ${FONT}`, DIM, 4, 'center');
   txt(g, 'Mangia i mostri con la bocca della trivella. Se un mostro tocca il tubo perdi una sonda. Quelli rossi non si mangiano.', W / 2, H - 72, `500 14px ${FONT}`, 'rgba(226,230,255,.7)', .5, 'center');
-  txt(g, 'I pallini grossi rallentano i mostri. Il tubo si ritira solo con ' + (touch ? 'il pollice destro.' : 'SPAZIO (A sul gamepad).'), W / 2, H - 50, `500 14px ${FONT}`, 'rgba(226,230,255,.7)', .5, 'center');
+  txt(g, `Ogni ${MONSTERS_PER_LIFE} mostri mangiati guadagni una sonda. I pallini grossi rallentano i mostri. Il tubo si ritira solo con ` + (touch ? 'il pollice destro.' : 'SPAZIO (A sul gamepad).'), W / 2, H - 50, `500 14px ${FONT}`, 'rgba(226,230,255,.7)', .5, 'center');
   controlsHint(g, H - 24, touch);
 }
 
@@ -85,6 +99,127 @@ export function paused(g, t, items, sel, touch) {
 export function options(g, t, items, sel, dark, touch) {
   veil(g, dark); heading(g, 'OPZIONI', 220); menu(g, t, items, sel, MENU_POS.options[0], MENU_POS.options[1]);
   txt(g, touch ? 'TOCCA una voce per cambiarla' : 'SINISTRA / DESTRA  cambia        ESC · B  indietro', W / 2, H - 24, `500 13px ${FONT}`, DIM, 1.5, 'center');
+}
+
+// ---------------------------------------------------------------- sfida online
+function cancelButton(g, label) {
+  g.strokeStyle = 'rgba(226,230,255,.35)'; g.lineWidth = 2;
+  g.beginPath(); g.roundRect(W / 2 - 150, 632, 300, 46, 23); g.stroke();
+  txt(g, label, W / 2 + 2, 662, `600 16px ${FONT}`, 'rgba(226,230,255,.8)', 4, 'center');
+}
+
+export function multi(g, t, items, sel, touch) {
+  veil(g, .64); heading(g, 'SFIDA ONLINE', 210);
+  txt(g, 'DUE GIOCATORI · STESSE MAPPE · VINCE CHI RESTA IN GIOCO', W / 2 + 3, 252, `600 14px ${FONT}`, CYAN, 5, 'center');
+  menu(g, t, items, sel, MENU_POS.multi[0], MENU_POS.multi[1]);
+  txt(g, 'Ogni mostro che mangi entra nella mappa del tuo avversario.', W / 2, H - 50, `500 14px ${FONT}`, 'rgba(226,230,255,.7)', .5, 'center');
+  txt(g, touch ? 'TOCCA una voce per sceglierla' : 'INVIO · A  conferma        ESC · B  indietro', W / 2, H - 24, `500 13px ${FONT}`, DIM, 1.5, 'center');
+}
+
+// info: { mode: 'quick' | 'host' | 'join', status: 'connecting' | 'waiting' | 'error', code, error }
+export function mpWait(g, t, info, touch) {
+  veil(g, .7); heading(g, 'SFIDA ONLINE', 190);
+  const dots = '.'.repeat(1 + Math.floor(t * 2) % 3);
+  if (info.status === 'error') {
+    txt(g, info.error || 'Collegamento non riuscito', W / 2, 360, `600 24px ${FONT}`, '#ff8a7a', 2, 'center');
+    cancelButton(g, 'INDIETRO');
+    return;
+  }
+  if (info.mode === 'host' && info.code) {
+    txt(g, 'CODICE DELLA PARTITA', W / 2 + 3, 292, `600 15px ${FONT}`, DIM, 6, 'center');
+    g.save(); g.shadowColor = '#ff7a1e'; g.shadowBlur = 30;
+    txt(g, info.code.split('').join(' '), W / 2 + 10, 390, `700 92px ${FONT}`, ORANGE, 10, 'center');
+    g.restore();
+    txt(g, 'Comunicalo al tuo avversario: lo inserisce in "Entra con codice".', W / 2, 446, `500 16px ${FONT}`, 'rgba(226,230,255,.8)', .5, 'center');
+    txt(g, 'IN ATTESA DELL\'AVVERSARIO' + dots, W / 2 + 3, 520, `600 16px ${FONT}`, CYAN, 5, 'center');
+  } else {
+    const s = info.status === 'connecting' ? 'COLLEGAMENTO' : info.mode === 'quick' ? 'RICERCA DI UN AVVERSARIO' : 'COLLEGAMENTO';
+    txt(g, s + dots, W / 2 + 3, 370, `600 24px ${FONT}`, CYAN, 6, 'center');
+    if (info.mode === 'quick' && info.status === 'waiting')
+      txt(g, 'La partita comincia appena un altro giocatore sceglie "Partita veloce".', W / 2, 420, `500 16px ${FONT}`, 'rgba(226,230,255,.8)', .5, 'center');
+  }
+  cancelButton(g, 'ANNULLA');
+  if (!touch) txt(g, 'ESC · B  annulla', W / 2, H - 16, `500 13px ${FONT}`, DIM, 1.5, 'center');
+}
+
+export function mpJoin(g, t, code, sel, touch) {
+  veil(g, .72); heading(g, 'ENTRA CON CODICE', 150);
+  txt(g, 'INSERISCI IL CODICE DI 5 CIFRE', W / 2 + 3, 196, `600 14px ${FONT}`, DIM, 5, 'center');
+  for (let i = 0; i < 5; i++) {                       // le cinque caselle del codice
+    const x = W / 2 - 190 + i * 78, on = i === code.length && Math.sin(t * 7) > 0;
+    g.strokeStyle = i < code.length ? ORANGE : on ? CYAN : 'rgba(226,230,255,.3)'; g.lineWidth = 2.5;
+    g.beginPath(); g.roundRect(x, 222, 66, 80, 10); g.stroke();
+    if (i < code.length) txt(g, code[i], x + 33, 282, `700 54px ${FONT}`, WHITE, 0, 'center');
+  }
+  KEYS.forEach((k, i) => {
+    const x = KP.x + (i % 3) * KP.w, y = KP.y + Math.floor(i / 3) * KP.h, on = i === sel;
+    const ok = k === 'OK', ready = code.length === 5;
+    g.fillStyle = on ? 'rgba(255,150,60,.24)' : 'rgba(226,230,255,.06)';
+    g.beginPath(); g.roundRect(x + 5, y + 5, KP.w - 10, KP.h - 10, 12); g.fill();
+    g.strokeStyle = on ? ORANGE : 'rgba(226,230,255,.22)'; g.lineWidth = on ? 2.5 : 1.5; g.stroke();
+    const col = ok ? (ready ? CYAN : 'rgba(226,230,255,.3)') : on ? ORANGE : WHITE;
+    txt(g, k === '<' ? '⌫' : k, x + KP.w / 2 + (ok ? 2 : 0), y + KP.h / 2 + 11, `700 ${ok ? 24 : 30}px ${FONT}`, col, ok ? 3 : 0, 'center');
+  });
+  cancelButton(g, 'INDIETRO');
+  if (!touch) txt(g, 'TASTIERA  cifre e INVIO        ESC · B  indietro', W / 2, H - 16, `500 13px ${FONT}`, DIM, 1.5, 'center');
+}
+
+// Tabellone sopra i due riquadri: a sinistra chi gioca, a destra l'avversario.
+export function versusHud(g, mine, theirs, top) {
+  g.save(); g.translate(0, top);
+  const VS_Y = VS_HUD, gr = g.createLinearGradient(0, 0, 0, VS_Y);
+  gr.addColorStop(0, '#0b0a24'); gr.addColorStop(1, '#05040f');
+  g.fillStyle = gr; g.fillRect(0, 0, W, VS_Y);
+  const lab = `600 11px ${FONT}`, dim = 'rgba(200,205,255,.55)';
+  [[mine, 'TU', ORANGE], [theirs, 'AVVERSARIO', CYAN]].forEach(([p, name, col], side) => {
+    const x = side * (W / 2) + 28, hp = p.prm.pal.pel;
+    txt(g, name, x, 40, `700 20px ${FONT}`, col, 6);
+    txt(g, String(p.score).padStart(6, '0'), x, 98, `700 50px ${FONT}`, WHITE, 3);
+    txt(g, 'SETTORE', x + 250, 34, lab, dim, 3); txt(g, String(p.level).padStart(2, '0'), x + 250, 60, `700 22px ${FONT}`, WHITE, 2);
+    const m = p.mult();
+    txt(g, 'BONUS', x + 350, 34, lab, dim, 3); txt(g, '×' + m, x + 350, 60, `700 22px ${FONT}`, m > 1 ? `hsl(${hp},100%,72%)` : 'rgba(242,244,255,.45)', 2);
+    txt(g, 'SONDE', x + 440, 34, lab, dim, 3);
+    for (let i = 0; i < Math.max(3, p.lives); i++) {
+      const lx = x + 448 + i * 28, on = i < p.lives;
+      g.fillStyle = on ? '#ff9d3c' : 'rgba(200,205,255,.16)'; g.beginPath(); g.roundRect(lx - 8, 44, 13, 14, 4); g.fill();
+      g.beginPath(); g.moveTo(lx + 6, 44); g.lineTo(lx + 15, 51); g.lineTo(lx + 6, 58); g.closePath();
+      g.fillStyle = on ? '#dfe3ff' : 'rgba(200,205,255,.16)'; g.fill();
+    }
+    g.fillStyle = 'rgba(200,205,255,.16)'; g.fillRect(x + 440, 64, 100, 3);       // mostri mangiati verso la prossima sonda
+    g.fillStyle = '#ff9d3c'; g.fillRect(x + 440, 64, 100 * ((p.eaten | 0) % MONSTERS_PER_LIFE) / MONSTERS_PER_LIFE, 3);
+    txt(g, 'ENERGIA', x + 250, 88, lab, dim, 3);
+    const segs = 22, lit = Math.ceil(p.energy * segs), low = p.energy < .25;
+    for (let i = 0; i < segs; i++) {
+      g.fillStyle = i < lit ? (low ? '#ff5a4a' : `hsl(${hp},100%,${62 + 14 * (i / segs)}%)`) : 'rgba(200,205,255,.14)';
+      g.fillRect(x + 250 + i * 15, 97, 11, 12);
+    }
+    g.fillStyle = col; g.fillRect(side * (W / 2), VS_Y - 3, W / 2, 3);          // bordo colorato del riquadro
+  });
+  g.fillStyle = '#05040f'; g.fillRect(W / 2 - 1.5, 0, 3, VS_Y + H * VS_SCALE);
+  g.restore();
+}
+
+export function versusMenu(g, t, items, sel) {
+  veil(g, .6); heading(g, 'SFIDA IN CORSO', 250);
+  txt(g, 'LA PARTITA NON SI FERMA', W / 2 + 3, 290, `600 14px ${FONT}`, '#ff8a7a', 5, 'center');
+  menu(g, t, items, sel, MENU_POS.vsmenu[0], MENU_POS.vsmenu[1]);
+}
+
+// res: { kind: 'win' | 'lose' | 'draw' | 'forfeit' | 'offline', mine, theirs, note }
+export function versusEnd(g, t, res, items, sel) {
+  veil(g, .76);
+  const won = res.kind === 'win' || res.kind === 'forfeit';
+  const title = won ? 'HAI VINTO' : res.kind === 'lose' ? 'HAI PERSO' : res.kind === 'draw' ? 'PAREGGIO' : 'SFIDA INTERROTTA';
+  g.save(); g.shadowColor = won ? '#3fe0ff' : '#ff7a1e'; g.shadowBlur = 40;
+  txt(g, title, W / 2 + 10, 230, `700 84px ${FONT}`, won ? CYAN : ORANGE, 14, 'center');
+  g.restore();
+  if (res.note) txt(g, res.note, W / 2 + 3, 276, `600 15px ${FONT}`, DIM, 4, 'center');
+  [['TU', res.mine, ORANGE], ['AVVERSARIO', res.theirs, CYAN]].forEach(([name, score, col], i) => {
+    const x = W / 2 + (i ? 170 : -170);
+    txt(g, name, x + 3, 348, `700 16px ${FONT}`, col, 5, 'center');
+    txt(g, String(score).padStart(6, '0'), x + 3, 410, `700 56px ${FONT}`, WHITE, 4, 'center');
+  });
+  menu(g, t, items, sel, MENU_POS.vsend[0], MENU_POS.vsend[1]);
 }
 
 // Comandi a schermo durante la partita. stick = levetta attiva in coordinate di gioco

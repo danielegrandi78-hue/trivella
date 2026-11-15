@@ -9,11 +9,16 @@ export const RIGP = { x: X0 + ENTRY * SP, y: GROUND - 2 };
 export function setEntry(col) { ENTRY = col; RIGP.x = X0 + col * SP; }
 export const FONT = 'Bahnschrift, "Segoe UI", system-ui, sans-serif';
 
-export const PAUSE_BTN = { x: 1246, y: 30, r: 30 };   // pulsante di pausa sugli schermi a tocco
+// Indirizzo del server delle sfide online (Cloudflare Worker "trivella-online", vedi cartella server).
+// Se è vuoto la voce "Sfida online" non compare nel menu.
+export const ONLINE_URL = 'wss://trivella-online.cam2d.workers.dev';
+
+export const PAUSE_BTN ={ x: 1246, y: 30, r: 30 };   // pulsante di pausa sugli schermi a tocco
 
 export const EXTEND = 290, RETRACT = 980, HIT_RETRACT = 1300;   // px al secondo
 export const SLOW_TIME = 6;      // secondi di mostri rallentati dopo un pallino grosso
 export const MAX_LIVES = 5, EXTRA_LIFE_EVERY = 25000;
+export const MONSTERS_PER_LIFE = 20;      // una sonda in più ogni tanti mostri mangiati con la bocca
 
 // I mostri "corazzati" non si possono mangiare: toccarli con la bocca costa una sonda.
 export const KINDS = [
@@ -26,8 +31,10 @@ export const KINDS = [
 export const POWERS = [
   { id: 'gelo', hue: 195, label: 'LENTI', time: SLOW_TIME, pickup: false },   // mostri rallentati: si attiva con i pallini grossi
   { id: 'scudo', hue: 48, label: 'SCUDO', time: 7 },         // il tubo distrugge chi lo tocca
-  { id: 'calamita', hue: 285, label: 'CALAMITA', time: 9 }   // attira i cristalli vicini
+  { id: 'calamita', hue: 285, label: 'CALAMITA', time: 9 },  // attira i cristalli vicini
+  { id: 'turbo', hue: 130, label: 'TURBO', time: 8 }         // il tubo avanza e si ritira più in fretta
 ];
+export const TURBO_EXTEND = 1.5, TURBO_RETRACT = 1.3;       // moltiplicatori di velocità con il Turbo
 
 // Ambientazioni: tinta della roccia e dei cristalli, cielo (dall'alto all'orizzonte), bagliore al suolo.
 export const PALETTES = [

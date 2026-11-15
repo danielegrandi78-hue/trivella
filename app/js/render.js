@@ -1,5 +1,5 @@
 // Disegno: sfondo del settore, luci, sonda, mostri, effetti, barra di stato.
-import { W, H, GROUND, NY, SP, Y0, TW, N, NX, ENTRY, RIGP, FONT, KINDS, POWERS, MAX_LIVES, nodes, P, rng } from './config.js';
+import { W, H, GROUND, NY, SP, Y0, TW, N, NX, ENTRY, RIGP, FONT, KINDS, POWERS, MAX_LIVES, MONSTERS_PER_LIFE, nodes, P, rng } from './config.js';
 
 function makeGlow(h, s, l, soft) {
   const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -20,13 +20,13 @@ export class Renderer {
   constructor(cv) {
     this.cv = cv; this.ctx = cv.getContext('2d');
     this.lightCv = document.createElement('canvas'); this.lctx = this.lightCv.getContext('2d');
-    this.S = 1; this.bg = null; this.bgKey = -1;
+    this.S = 1; this.slots = [];        // sfondi già disegnati, uno per riquadro (due nello schermo diviso)
     this.GLIGHT = makeGlow(0, 0, 100, true);
     this.GO = makeGlow(28, 100, 60); this.GR = makeGlow(0, 100, 60); this.GWH = makeGlow(40, 100, 92);
     this.GGOLD = makeGlow(48, 100, 62); this.GICE = makeGlow(195, 100, 75);
     this.GC = KINDS.map(k => makeGlow(k.hue, 100, 62));
     this.GPW = POWERS.map(p => makeGlow(p.hue, 100, 66));
-    this.GP = null; this.pelHue = -1;
+    this.GP = null;
     this.fit();
     addEventListener('resize', () => this.fit());
   }
@@ -39,14 +39,13 @@ export class Renderer {
     this.S = Math.max(.25, Math.min(k * dpr, 2.5));
     cv.width = Math.round(W * this.S); cv.height = Math.round(H * this.S);
     this.lightCv.width = Math.round(W * this.S / 2); this.lightCv.height = Math.round(H * this.S / 2);
-    this.bgKey = -1;
+    this.slots = [];
   }
 
   // ------------------------------------------------------------ sfondo (una volta per settore)
   buildBg(game) {
     const S = this.S, pal = game.prm.pal, hr = pal.rock, hp = pal.pel, adj = game.L.adj;
-    if (hp !== this.pelHue) { this.GP = makeGlow(hp, 100, 65); this.pelHue = hp; }
-    const bg = this.bg = document.createElement('canvas'); bg.width = this.cv.width; bg.height = this.cv.height;
+    const bg = document.createElement('canvas'); bg.width = this.cv.width; bg.height = this.cv.height;
     const g = bg.getContext('2d'); g.scale(S, S);
     const r = rng(77 + game.level * 13 + (game.seed | 0));
 
@@ -142,6 +141,15 @@ export class Renderer {
     layer(`hsl(${hr},42%,31%)`, TW + 4);
     layer('#04050c', TW);
     g.strokeStyle = `hsla(${hr - 25},60%,16%,.5)`; g.lineWidth = TW - 15; g.stroke(tun);
+    return bg;
+  }
+
+  // Pulisce tutto lo schermo: serve prima di disegnare più riquadri nello stesso fotogramma.
+  clear() {
+    const g = this.ctx;
+    g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+    g.fillStyle = '#03040a'; g.fillRect(0, 0, this.cv.width, this.cv.height);
+    g.setTransform(this.S, 0, 0, this.S, 0, 0);
   }
 
   // ------------------------------------------------------------ elementi di scena
@@ -266,9 +274,11 @@ export class Renderer {
       g.beginPath(); for (let i = 0; i < 3; i++) { const a = i * 1.0472; g.moveTo(Math.cos(a) * s, Math.sin(a) * s); g.lineTo(-Math.cos(a) * s, -Math.sin(a) * s); } g.stroke();
     } else if (kind === 1) {     // scudo
       g.beginPath(); g.moveTo(-s * .8, -s * .8); g.lineTo(s * .8, -s * .8); g.lineTo(s * .8, 0); g.quadraticCurveTo(s * .7, s * .8, 0, s); g.quadraticCurveTo(-s * .7, s * .8, -s * .8, 0); g.closePath(); g.fill();
-    } else {                     // calamita: ferro di cavallo
+    } else if (kind === 2) {     // calamita: ferro di cavallo
       g.lineWidth = s * .5; g.lineCap = 'butt';
       g.beginPath(); g.moveTo(-s * .65, -s * .8); g.lineTo(-s * .65, s * .1); g.arc(0, s * .1, s * .65, Math.PI, 0, true); g.lineTo(s * .65, -s * .8); g.stroke();
+    } else {                     // turbo: fulmine
+      g.beginPath(); g.moveTo(s * .25, -s); g.lineTo(-s * .65, s * .15); g.lineTo(-s * .05, s * .15); g.lineTo(-s * .25, s); g.lineTo(s * .65, -s * .2); g.lineTo(s * .05, -s * .2); g.closePath(); g.fill();
     }
   }
 
@@ -288,25 +298,39 @@ export class Renderer {
   }
 
   // ------------------------------------------------------------ fotogramma
+  // opt: hud (barra di stato completa) · phase (solo le scritte di fase) · hi (record)
+  //      view { x, y, s } riquadro in cui disegnare, in coordinate di gioco (schermo diviso)
+  //      slot numero del riquadro · pel raggio dei cristalli (più grandi nei riquadri piccoli)
   draw(game, opt) {
-    if (game.bgKey !== this.bgKey) { this.buildBg(game); this.bgKey = game.bgKey; }
+    opt = opt || {};
     const g = this.ctx, S = this.S, cv = this.cv, t = game.time, h = game.headPos(), hp = game.prm.pal.pel;
+    const view = opt.view, vx = view ? view.x : 0, vy = view ? view.y : 0, vs = view ? view.s : 1, VS = S * vs;
+    const pr = opt.pel || 2.7, pk = pr / 2.7;
+    let slot = this.slots[opt.slot || 0];
+    if (!slot || slot.game !== game || slot.key !== game.bgKey) {
+      this.GP = makeGlow(hp, 100, 65);
+      slot = this.slots[opt.slot || 0] = { game, key: game.bgKey, bg: this.buildBg(game), GP: this.GP };
+    }
+    this.GP = slot.GP;
     const sx = game.shake ? (Math.random() - .5) * game.shake : 0, sy = game.shake ? (Math.random() - .5) * game.shake : 0;
+    const ox = (vx + sx * vs) * S, oy = (vy + sy * vs) * S;      // origine del riquadro in pixel, tremolio compreso
+    if (!view) this.clear();
+    g.save();
     g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
-    g.fillStyle = '#03040a'; g.fillRect(0, 0, cv.width, cv.height);
-    g.drawImage(this.bg, sx * S, sy * S);
-    g.setTransform(S, 0, 0, S, sx * S, sy * S);
+    if (view) { g.beginPath(); g.rect(vx * S, vy * S, W * VS, H * VS); g.clip(); }
+    g.drawImage(slot.bg, ox, oy, cv.width * vs, cv.height * vs);
+    g.setTransform(VS, 0, 0, VS, ox, oy);
 
     // cristalli: nucleo sotto il buio, alone sopra
     const pels = game.L.pelList;
     g.fillStyle = `hsl(${hp},100%,80%)`;
-    for (const p of pels) if (p.alive && !p.big) { g.beginPath(); g.arc(p.x, p.y, 2.7, 0, 6.283); g.fill(); }
+    for (const p of pels) if (p.alive && !p.big) { g.beginPath(); g.arc(p.x, p.y, pr, 0, 6.283); g.fill(); }
     this.drawLight(game, h);
-    g.save(); g.setTransform(1, 0, 0, 1, sx * S, sy * S); g.drawImage(this.lightCv, 0, 0, cv.width, cv.height); g.restore();
+    g.save(); g.setTransform(1, 0, 0, 1, ox, oy); g.drawImage(this.lightCv, 0, 0, cv.width * vs, cv.height * vs); g.restore();
     g.globalCompositeOperation = 'lighter';
     for (const p of pels) if (p.alive) {
       if (p.big) glow(g, this.GICE, p.x, p.y, 44 + 6 * Math.sin(t * 3 + p.ph), .9);
-      else glow(g, this.GP, p.x, p.y, 11, .34 + .2 * Math.sin(t * 3 + p.ph));
+      else glow(g, this.GP, p.x, p.y, 11 * pk, .34 + .2 * Math.sin(t * 3 + p.ph));
     }
     g.globalCompositeOperation = 'source-over';
     // pallini grossi: sfera color ghiaccio con anello che ruota (rallentano i mostri)
@@ -334,8 +358,10 @@ export class Renderer {
       g.strokeStyle = hurt ? 'rgba(255,50,50,.3)' : 'rgba(255,130,40,.17)'; g.lineWidth = 22; g.stroke(path);
       g.globalCompositeOperation = 'source-over';
       g.strokeStyle = '#2a1608'; g.lineWidth = 10; g.stroke(path);
+      const turbo = game.fx.turbo > 0;       // con il Turbo il flusso nel tubo corre e diventa verde
       g.strokeStyle = hurt ? '#ff5a4a' : shield ? '#ffd65a' : '#ff9d3c'; g.lineWidth = 6; g.stroke(path);
-      g.strokeStyle = 'rgba(255,244,210,.92)'; g.lineWidth = 2; g.setLineDash([5, 13]); g.lineDashOffset = t * 70; g.stroke(path); g.setLineDash([]);
+      g.strokeStyle = turbo ? 'rgba(170,255,120,.95)' : 'rgba(255,244,210,.92)'; g.lineWidth = turbo ? 2.6 : 2;
+      g.setLineDash(turbo ? [9, 9] : [5, 13]); g.lineDashOffset = t * (turbo ? 190 : 70); g.stroke(path); g.setLineDash([]);
     }
 
     const frozen = game.fx.gelo > 0;
@@ -367,14 +393,18 @@ export class Renderer {
     }
     g.globalAlpha = 1;
 
-    // sovrapposizioni a schermo fisso
-    g.setTransform(S, 0, 0, S, 0, 0);
+    // sovrapposizioni fisse rispetto al riquadro (senza tremolio)
+    g.setTransform(VS, 0, 0, VS, vx * S, vy * S);
     if (game.flash > 0) { g.fillStyle = `rgba(255,40,40,${game.flash * .28})`; g.fillRect(0, 0, W, H); }
     if (frozen) { g.fillStyle = `rgba(120,200,255,${.05 + .02 * Math.sin(t * 5)})`; g.fillRect(0, GROUND, W, H - GROUND); }
     const gr = g.createRadialGradient(W / 2, H / 2, H * .45, W / 2, H / 2, H * .95);
     gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,.55)');
     g.fillStyle = gr; g.fillRect(0, 0, W, H);
-    if (opt && opt.hud) { this.drawHud(g, game, opt.hi || 0); this.drawPhase(g, game); }
+    if (opt.hud) this.drawHud(g, game, opt.hi || 0);
+    if (opt.hud || opt.phase) this.drawPhase(g, game);
+    g.restore();
+    // chi disegna dopo (menu, comandi a tocco) trova lo schermo intero in coordinate di gioco
+    g.setTransform(S, 0, 0, S, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
     g.textAlign = 'left'; g.letterSpacing = '0px';
   }
 
@@ -411,6 +441,9 @@ export class Renderer {
       g.beginPath(); g.moveTo(x + 6, 24); g.lineTo(x + 15, 31); g.lineTo(x + 6, 38); g.closePath();
       g.fillStyle = on ? '#dfe3ff' : 'rgba(200,205,255,.16)'; g.fill();
     }
+    // mostri mangiati verso la prossima sonda
+    g.fillStyle = 'rgba(200,205,255,.16)'; g.fillRect(1056, 44, 100, 3);
+    g.fillStyle = '#ff9d3c'; g.fillRect(1056, 44, 100 * (game.eaten % MONSTERS_PER_LIFE) / MONSTERS_PER_LIFE, 3);
 
     // potenziamenti attivi
     let x = 24;
