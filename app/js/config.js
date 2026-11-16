@@ -17,7 +17,7 @@ export const PAUSE_BTN ={ x: 1246, y: 30, r: 30 };   // pulsante di pausa sugli 
 
 export const EXTEND = 290, RETRACT = 980, HIT_RETRACT = 1300;   // px al secondo
 export const SLOW_TIME = 6;      // secondi di mostri rallentati dopo un pallino grosso
-export const MAX_LIVES = 5, EXTRA_LIFE_EVERY = 25000;
+export const MAX_LIVES = 4, EXTRA_LIFE_EVERY = 25000;
 export const MONSTERS_PER_LIFE = 20;      // una sonda in più ogni tanti mostri mangiati con la bocca
 
 // I mostri "corazzati" non si possono mangiare: toccarli con la bocca costa una sonda.

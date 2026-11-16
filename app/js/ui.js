@@ -8,10 +8,11 @@ const ORANGE = '#ffb868', DIM = 'rgba(200,205,255,.55)', WHITE = '#f2f4ff', CYAN
 // Posizione delle voci dei menu: [y della prima voce, passo]. Serve anche per riconoscere i tocchi.
 export const MENU_POS = { title: [392, 48], pause: [340, 48], options: [320, 52], multi: [330, 54], vsmenu: [350, 52], vsend: [520, 50] };
 
-// Schermo diviso: tabellone alto VS_HUD e, sotto, due riquadri a metà scala uno accanto all'altro.
-// Con tastiera o gamepad il blocco è centrato; a tocco sta in alto e lascia sotto lo spazio ai pollici.
-export const VS_HUD = 140, VS_SCALE = .5;
-export const vsTop = touch => touch ? 0 : Math.round((H - VS_HUD - H * VS_SCALE) / 2);
+// Sfida online: la propria mappa grande a sinistra, con la sua barra di stato; l'avversario in un
+// riquadro piccolo nella colonna di destra, con sotto i suoi dati. (Due mappe affiancate a metà
+// grandezza erano troppo piccole per giocare.)
+export const VS_MAIN = { x: 0, y: 72, s: .8 };             // 1024 x 576
+export const VS_PIP = { x: 1034, y: 118, s: .1875 };       // 240 x 135
 // Tastierino per il codice della partita: 3 colonne x 4 righe.
 export const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '<', '0', 'OK'];
 const KP = { x: W / 2 - 165, y: 330, w: 110, h: 68 };
@@ -164,39 +165,30 @@ export function mpJoin(g, t, code, sel, touch) {
   if (!touch) txt(g, 'TASTIERA  cifre e INVIO        ESC · B  indietro', W / 2, H - 16, `500 13px ${FONT}`, DIM, 1.5, 'center');
 }
 
-// Tabellone sopra i due riquadri: a sinistra chi gioca, a destra l'avversario.
-export function versusHud(g, mine, theirs, top) {
-  g.save(); g.translate(0, top);
-  const VS_Y = VS_HUD, gr = g.createLinearGradient(0, 0, 0, VS_Y);
-  gr.addColorStop(0, '#0b0a24'); gr.addColorStop(1, '#05040f');
-  g.fillStyle = gr; g.fillRect(0, 0, W, VS_Y);
-  const lab = `600 11px ${FONT}`, dim = 'rgba(200,205,255,.55)';
-  [[mine, 'TU', ORANGE], [theirs, 'AVVERSARIO', CYAN]].forEach(([p, name, col], side) => {
-    const x = side * (W / 2) + 28, hp = p.prm.pal.pel;
-    txt(g, name, x, 40, `700 20px ${FONT}`, col, 6);
-    txt(g, String(p.score).padStart(6, '0'), x, 98, `700 50px ${FONT}`, WHITE, 3);
-    txt(g, 'SETTORE', x + 250, 34, lab, dim, 3); txt(g, String(p.level).padStart(2, '0'), x + 250, 60, `700 22px ${FONT}`, WHITE, 2);
-    const m = p.mult();
-    txt(g, 'BONUS', x + 350, 34, lab, dim, 3); txt(g, '×' + m, x + 350, 60, `700 22px ${FONT}`, m > 1 ? `hsl(${hp},100%,72%)` : 'rgba(242,244,255,.45)', 2);
-    txt(g, 'SONDE', x + 440, 34, lab, dim, 3);
-    for (let i = 0; i < Math.max(3, p.lives); i++) {
-      const lx = x + 448 + i * 28, on = i < p.lives;
-      g.fillStyle = on ? '#ff9d3c' : 'rgba(200,205,255,.16)'; g.beginPath(); g.roundRect(lx - 8, 44, 13, 14, 4); g.fill();
-      g.beginPath(); g.moveTo(lx + 6, 44); g.lineTo(lx + 15, 51); g.lineTo(lx + 6, 58); g.closePath();
-      g.fillStyle = on ? '#dfe3ff' : 'rgba(200,205,255,.16)'; g.fill();
-    }
-    g.fillStyle = 'rgba(200,205,255,.16)'; g.fillRect(x + 440, 64, 100, 3);       // mostri mangiati verso la prossima sonda
-    g.fillStyle = '#ff9d3c'; g.fillRect(x + 440, 64, 100 * ((p.eaten | 0) % MONSTERS_PER_LIFE) / MONSTERS_PER_LIFE, 3);
-    txt(g, 'ENERGIA', x + 250, 88, lab, dim, 3);
-    const segs = 22, lit = Math.ceil(p.energy * segs), low = p.energy < .25;
-    for (let i = 0; i < segs; i++) {
-      g.fillStyle = i < lit ? (low ? '#ff5a4a' : `hsl(${hp},100%,${62 + 14 * (i / segs)}%)`) : 'rgba(200,205,255,.14)';
-      g.fillRect(x + 250 + i * 15, 97, 11, 12);
-    }
-    g.fillStyle = col; g.fillRect(side * (W / 2), VS_Y - 3, W / 2, 3);          // bordo colorato del riquadro
-  });
-  g.fillStyle = '#05040f'; g.fillRect(W / 2 - 1.5, 0, 3, VS_Y + H * VS_SCALE);
-  g.restore();
+// Colonna dell'avversario: cornice del riquadro e, sotto, punti, sonde, settore ed energia.
+export function versusSide(g, p) {
+  const x = VS_PIP.x, y = VS_PIP.y, w = W * VS_PIP.s, h = H * VS_PIP.s, hp = p.prm.pal.pel;
+  const lab = `600 11px ${FONT}`, dim = 'rgba(200,205,255,.55)', b = y + h;
+  txt(g, 'AVVERSARIO', x, y - 14, `700 16px ${FONT}`, CYAN, 5);
+  g.strokeStyle = p.phase === 'hit' ? '#ff5a4a' : CYAN; g.lineWidth = 2; g.strokeRect(x - 1, y - 1, w + 2, h + 2);
+  txt(g, 'PUNTI', x, b + 30, lab, dim, 3);
+  txt(g, String(p.score).padStart(6, '0'), x, b + 68, `700 38px ${FONT}`, WHITE, 3);
+  txt(g, 'SONDE', x, b + 100, lab, dim, 3);
+  for (let i = 0; i < Math.max(3, p.lives); i++) {
+    const lx = x + 8 + i * 28, on = i < p.lives;
+    g.fillStyle = on ? '#ff9d3c' : 'rgba(200,205,255,.16)'; g.beginPath(); g.roundRect(lx - 8, b + 110, 13, 14, 4); g.fill();
+    g.beginPath(); g.moveTo(lx + 6, b + 110); g.lineTo(lx + 15, b + 117); g.lineTo(lx + 6, b + 124); g.closePath();
+    g.fillStyle = on ? '#dfe3ff' : 'rgba(200,205,255,.16)'; g.fill();
+  }
+  g.fillStyle = 'rgba(200,205,255,.16)'; g.fillRect(x, b + 130, 100, 3);          // mostri mangiati verso la prossima sonda
+  g.fillStyle = '#ff9d3c'; g.fillRect(x, b + 130, 100 * ((p.eaten | 0) % MONSTERS_PER_LIFE) / MONSTERS_PER_LIFE, 3);
+  txt(g, 'SETTORE', x + 150, b + 100, lab, dim, 3); txt(g, String(p.level).padStart(2, '0'), x + 150, b + 126, `700 22px ${FONT}`, WHITE, 2);
+  txt(g, 'ENERGIA', x, b + 164, lab, dim, 3);
+  const segs = 22, lit = Math.ceil(p.energy * segs), low = p.energy < .25;
+  for (let i = 0; i < segs; i++) {
+    g.fillStyle = i < lit ? (low ? '#ff5a4a' : `hsl(${hp},100%,${62 + 14 * (i / segs)}%)`) : 'rgba(200,205,255,.14)';
+    g.fillRect(x + i * 10.9, b + 173, 8, 11);
+  }
 }
 
 export function versusMenu(g, t, items, sel) {

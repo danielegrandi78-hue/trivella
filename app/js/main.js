@@ -297,12 +297,11 @@ function update(dt) {
 
 function draw() {
   const g = R.ctx, touch = input.touch, split = inVersus() || screen === 'vsend';
-  if (split) {                                               // schermo diviso: la mia mappa a sinistra, l'avversario a destra
-    const top = ui.vsTop(touch), y = top + ui.VS_HUD, phase = screen !== 'vsend';
+  if (split) {                                               // sfida: la mia mappa grande, l'avversario nel riquadro a destra
     R.clear();
-    R.draw(game, { view: { x: 0, y, s: ui.VS_SCALE }, slot: 0, phase, pel: 4.4 });
-    R.draw(ghost, { view: { x: W / 2, y, s: ui.VS_SCALE }, slot: 1, phase, pel: 4.4 });
-    ui.versusHud(g, game, ghost, top);
+    R.draw(game, { view: ui.VS_MAIN, slot: 0, hud: screen !== 'vsend', hi: hiScore() });
+    R.draw(ghost, { view: ui.VS_PIP, slot: 1, pel: 5 });
+    ui.versusSide(g, ghost);
   } else R.draw(game, { hud: !game.attract && screen !== 'gameover', hi: hiScore() });
   if (screen === 'multi') ui.multi(g, clock, menuItems(), sel, touch);
   else if (screen === 'mpwait') ui.mpWait(g, clock, mp, touch);
