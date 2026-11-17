@@ -1,5 +1,5 @@
 // Disegno: sfondo del settore, luci, sonda, mostri, effetti, barra di stato.
-import { W, H, GROUND, NY, SP, Y0, TW, N, NX, ENTRY, RIGP, FONT, KINDS, POWERS, MAX_LIVES, MONSTERS_PER_LIFE, nodes, P, rng } from './config.js';
+import { W, H, GROUND, NY, SP, Y0, TW, N, NX, ENTRY, RIGP, FONT, KINDS, POWERS, MAX_LIVES, MONSTERS_PER_LIFE, MAX_LEVEL, FINISH_BONUS, nodes, P, rng } from './config.js';
 
 function makeGlow(h, s, l, soft) {
   const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -215,17 +215,22 @@ export class Renderer {
     } else if (c.kind === 2) {                // larva
       for (let s = 3; s >= 1; s--) { g.fillStyle = `hsl(${h},90%,${58 - s * 8}%)`; g.beginPath(); g.arc(-s * 6.5, Math.sin(t * 10 + c.ph + s * 1.3) * 2.4, 8.5 - s * 1.4, 0, 6.283); g.fill(); }
       g.fillStyle = body(9.5); g.beginPath(); g.arc(0, 0, 9.5, 0, 6.283); g.fill(); this.eyes(g, 3.5, 3.9, 2.7);
-    } else {                                  // magma: corazzato, non si mangia
-      const pulse = .5 + .5 * Math.sin(t * 6 + c.ph);
-      g.save(); g.rotate(t * 1.2 + c.ph); g.fillStyle = '#1c0a0a';
-      for (let i = 0; i < 8; i++) { g.rotate(6.283 / 8); g.beginPath(); g.moveTo(9, -4); g.lineTo(16.5, 0); g.lineTo(9, 4); g.closePath(); g.fill(); }
+    } else {                                  // magma: indistruttibile, non si mangia
+      // Deve saltare all'occhio: rosso vivo, punte, sguardo cattivo e un anello di pericolo che pulsa.
+      const pulse = .5 + .5 * Math.sin(time * 7 + c.ph);
+      g.strokeStyle = `rgba(255,60,40,${.4 + .55 * pulse})`; g.lineWidth = 2.4;
+      g.beginPath(); g.arc(0, 0, 19 + pulse * 3, 0, 6.283); g.stroke();
+      g.save(); g.rotate(t * 1.6 + c.ph); g.fillStyle = '#ff2a1a'; g.strokeStyle = '#3a0505'; g.lineWidth = 1;
+      for (let i = 0; i < 8; i++) { g.rotate(6.283 / 8); g.beginPath(); g.moveTo(9, -4.5); g.lineTo(18, 0); g.lineTo(9, 4.5); g.closePath(); g.fill(); g.stroke(); }
       g.restore();
-      const gr = g.createRadialGradient(-2, -3, 1, 0, 0, 12); gr.addColorStop(0, '#6a2416'); gr.addColorStop(1, '#170606');
-      g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 11.5, 0, 6.283); g.fill();
-      g.strokeStyle = `hsl(${14 + pulse * 22},100%,${52 + pulse * 18}%)`; g.lineWidth = 1.7; g.lineCap = 'round'; g.lineJoin = 'round';
-      g.beginPath(); g.moveTo(-9, -3); g.lineTo(-4, 1); g.lineTo(-6, 7); g.moveTo(-4, 1); g.lineTo(1, -2); g.lineTo(0, -9); g.moveTo(1, -2); g.lineTo(5, 5); g.lineTo(2, 9); g.stroke();
-      g.fillStyle = '#ffd84a';
-      for (const s of [-1, 1]) { g.beginPath(); g.ellipse(5.5, s * 3.6, 3, 1.2, s * .5, 0, 6.283); g.fill(); }
+      const gr = g.createRadialGradient(-2, -3, 1, 0, 0, 12.5); gr.addColorStop(0, '#fff3b0'); gr.addColorStop(.35, '#ff8a1e'); gr.addColorStop(1, '#c01208');
+      g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 12, 0, 6.283); g.fill();
+      g.strokeStyle = '#3a0505'; g.lineWidth = 1.5; g.stroke();
+      g.fillStyle = '#1a0303'; g.lineWidth = 2.2; g.lineCap = 'round';
+      for (const s of [-1, 1]) {
+        g.beginPath(); g.ellipse(5, s * 4.2, 3.1, 1.9, s * .55, 0, 6.283); g.fill();
+        g.beginPath(); g.moveTo(.5, s * 7.5); g.lineTo(8.5, s * 2.2); g.stroke();       // sopracciglia aggrottate
+      }
     }
     g.restore();
     if (frozen) {
@@ -373,6 +378,7 @@ export class Renderer {
         g.strokeStyle = `hsla(${hue},100%,72%,${a})`; g.lineWidth = 3.5; g.lineCap = 'round'; g.lineJoin = 'round';
         g.beginPath(); g.moveTo(ex - 5 * c.dir, c.y - 8); g.lineTo(ex + 4 * c.dir, c.y); g.lineTo(ex - 5 * c.dir, c.y + 8); g.stroke();
         g.globalCompositeOperation = 'lighter'; glow(g, this.GC[c.kind], ex, c.y, 26, a * .7); g.globalCompositeOperation = 'source-over';
+        if (KINDS[c.kind].armored) txt(g, '!', ex + 15 * c.dir, c.y + 8, `700 22px ${FONT}`, `rgba(255,70,50,${a})`, 0, 'center');     // in arrivo un indistruttibile
       }
     }
     this.drawHead(g, game, h, t);
@@ -485,5 +491,6 @@ export class Renderer {
     else if (game.phase === 'clear') this.banner(g, 'SETTORE ' + lv, 'COMPLETATO   BONUS +' + game.bonus, fade, hp);
     else if (game.phase === 'hit' && game.msg) this.banner(g, game.msg, game.lives > 0 ? 'SONDE RIMASTE  ' + game.lives : '', 1, 0, 52);
     else if (game.phase === 'over') this.banner(g, 'FINE PARTITA', '', 1, 0);
+    else if (game.phase === 'won') this.banner(g, 'MISSIONE COMPIUTA', `TUTTI I ${MAX_LEVEL} SETTORI COMPLETATI   BONUS +${FINISH_BONUS}`, 1, hp, 64);
   }
 }

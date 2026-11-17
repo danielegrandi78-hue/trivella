@@ -20,6 +20,14 @@ export function keypadHit(x, y) {
   const c = Math.floor((x - KP.x) / KP.w), r = Math.floor((y - KP.y) / KP.h);
   return c >= 0 && c < 3 && r >= 0 && r < 4 ? r * 3 + c : -1;
 }
+// Tastiera a schermo per il nome del giocatore: 4 righe da 10 tasti.
+export const NICK_KEYS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_'.split('').concat(['<', 'OK']);
+export const NICK_MAX = 10;
+const NK = { x: W / 2 - 330, y: 318, w: 66, h: 62 };
+export function nickHit(x, y) {
+  const c = Math.floor((x - NK.x) / NK.w), r = Math.floor((y - NK.y) / NK.h);
+  return c >= 0 && c < 10 && r >= 0 && r < 4 ? r * 10 + c : -1;
+}
 // Pulsante "annulla / indietro" in basso, per gli schermi a tocco.
 export const cancelHit = (x, y) => Math.abs(x - W / 2) < 170 && Math.abs(y - 655) < 30;
 // Indice della voce toccata, oppure -1.
@@ -70,7 +78,7 @@ export function menu(g, t, items, sel, y0, step) {
         const n = 10, lit = Math.round(it.bar * n);
         for (let k = 0; k < n; k++) { g.fillStyle = k < lit ? (on ? ORANGE : 'rgba(226,230,255,.72)') : 'rgba(200,205,255,.16)'; g.fillRect(W / 2 + 60 + k * 21, y - 17, 15, 18); }
       } else txt(g, it.value, W / 2 + 268, y, font, col, 4, 'right');
-      if (on) txt(g, '◂  ▸', W / 2 + 20, y - 2, `600 16px ${FONT}`, ORANGE, 0, 'center');
+      if (on && !it.noArrows) txt(g, '◂  ▸', W / 2 + 20, y - 2, `600 16px ${FONT}`, ORANGE, 0, 'center');
     }
   });
 }
@@ -165,11 +173,29 @@ export function mpJoin(g, t, code, sel, touch) {
   if (!touch) txt(g, 'TASTIERA  cifre e INVIO        ESC · B  indietro', W / 2, H - 16, `500 13px ${FONT}`, DIM, 1.5, 'center');
 }
 
-// Colonna dell'avversario: cornice del riquadro e, sotto, punti, sonde, settore ed energia.
-export function versusSide(g, p) {
+export function mpNick(g, t, draft, sel, touch) {
+  veil(g, .72); heading(g, 'IL TUO NOME', 150);
+  txt(g, 'LO VEDE IL TUO AVVERSARIO NELLE SFIDE ONLINE', W / 2 + 3, 196, `600 14px ${FONT}`, DIM, 5, 'center');
+  g.strokeStyle = ORANGE; g.lineWidth = 2.5; g.beginPath(); g.roundRect(W / 2 - 230, 224, 460, 70, 12); g.stroke();
+  const shown = draft + (draft.length < NICK_MAX && Math.sin(t * 7) > 0 ? '_' : '');
+  txt(g, shown, W / 2 + 4, 274, `700 44px ${FONT}`, WHITE, 6, 'center');
+  NICK_KEYS.forEach((k, i) => {
+    const x = NK.x + (i % 10) * NK.w, y = NK.y + Math.floor(i / 10) * NK.h, on = i === sel, ok = k === 'OK';
+    g.fillStyle = on ? 'rgba(255,150,60,.24)' : 'rgba(226,230,255,.06)';
+    g.beginPath(); g.roundRect(x + 4, y + 4, NK.w - 8, NK.h - 8, 10); g.fill();
+    g.strokeStyle = on ? ORANGE : 'rgba(226,230,255,.22)'; g.lineWidth = on ? 2.5 : 1.5; g.stroke();
+    const col = ok ? (draft.length ? CYAN : 'rgba(226,230,255,.3)') : on ? ORANGE : WHITE;
+    txt(g, k === '<' ? '⌫' : k, x + NK.w / 2 + (ok ? 1 : 0), y + NK.h / 2 + 10, `700 ${ok ? 20 : 26}px ${FONT}`, col, ok ? 2 : 0, 'center');
+  });
+  cancelButton(g, 'INDIETRO');
+  if (!touch) txt(g, 'TASTIERA  scrivi e INVIO        ESC · B  indietro', W / 2, H - 16, `500 13px ${FONT}`, DIM, 1.5, 'center');
+}
+
+// Colonna dell'avversario: nome, cornice del riquadro e, sotto, punti, sonde, settore ed energia.
+export function versusSide(g, p, name) {
   const x = VS_PIP.x, y = VS_PIP.y, w = W * VS_PIP.s, h = H * VS_PIP.s, hp = p.prm.pal.pel;
   const lab = `600 11px ${FONT}`, dim = 'rgba(200,205,255,.55)', b = y + h;
-  txt(g, 'AVVERSARIO', x, y - 14, `700 16px ${FONT}`, CYAN, 5);
+  txt(g, name || 'AVVERSARIO', x, y - 14, `700 16px ${FONT}`, CYAN, name && name.length > 8 ? 2 : 5);
   g.strokeStyle = p.phase === 'hit' ? '#ff5a4a' : CYAN; g.lineWidth = 2; g.strokeRect(x - 1, y - 1, w + 2, h + 2);
   txt(g, 'PUNTI', x, b + 30, lab, dim, 3);
   txt(g, String(p.score).padStart(6, '0'), x, b + 68, `700 38px ${FONT}`, WHITE, 3);
@@ -207,7 +233,7 @@ export function versusEnd(g, t, res, items, sel) {
   txt(g, title, W / 2 + 10, 230, `700 84px ${FONT}`, won ? CYAN : ORANGE, 14, 'center');
   g.restore();
   if (res.note) txt(g, res.note, W / 2 + 3, 276, `600 15px ${FONT}`, DIM, 4, 'center');
-  [['TU', res.mine, ORANGE], ['AVVERSARIO', res.theirs, CYAN]].forEach(([name, score, col], i) => {
+  [[res.myName || 'TU', res.mine, ORANGE], [res.theirName || 'AVVERSARIO', res.theirs, CYAN]].forEach(([name, score, col], i) => {
     const x = W / 2 + (i ? 170 : -170);
     txt(g, name, x + 3, 348, `700 16px ${FONT}`, col, 5, 'center');
     txt(g, String(score).padStart(6, '0'), x + 3, 410, `700 56px ${FONT}`, WHITE, 4, 'center');
@@ -242,10 +268,10 @@ export function touchControls(g, stick, retract) {
 }
 
 export function gameOver(g, t, res, scores, touch) {
-  veil(g, .74); heading(g, 'FINE PARTITA', 170);
+  veil(g, .74); heading(g, res.won ? 'MISSIONE COMPIUTA' : 'FINE PARTITA', 170);
   txt(g, 'PUNTI', W / 2 + 2, 222, `600 13px ${FONT}`, DIM, 5, 'center');
   txt(g, String(res.score).padStart(6, '0'), W / 2 + 4, 274, `700 52px ${FONT}`, WHITE, 6, 'center');
-  txt(g, 'SETTORE RAGGIUNTO  ' + String(res.level).padStart(2, '0'), W / 2 + 2, 306, `600 14px ${FONT}`, DIM, 4, 'center');
+  txt(g, res.won ? 'HAI COMPLETATO TUTTI I SETTORI' : 'SETTORE RAGGIUNTO  ' + String(res.level).padStart(2, '0'), W / 2 + 2, 306, `600 14px ${FONT}`, res.won ? CYAN : DIM, 4, 'center');
   if (res.record && Math.sin(t * 7) > -.4) txt(g, 'NUOVO RECORD', W / 2 + 4, 344, `700 22px ${FONT}`, CYAN, 8, 'center');
 
   txt(g, 'CLASSIFICA', W / 2 + 2, 396, `600 13px ${FONT}`, DIM, 5, 'center');

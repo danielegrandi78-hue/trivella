@@ -19,16 +19,17 @@ export const TYPES = [
 // Schermo bonus: simmetrico, con caverne piene di cristalli e nessun mostro.
 const BONUS_TYPE = { name: 'SETTORE BONUS', rows: ['LPLLPLPL', 'LLPLPLLP'], shafts: 'random', mirror: true, rooms: [2, 3] };
 
-// Difficoltà crescente con il numero del settore.
+// Difficoltà crescente con il numero del settore, fino al centesimo: sale in fretta nei primi
+// dieci-quindici settori (fast va da 0 a 1) e poi continua piano fino alla fine.
 export function levelParams(lv) {
-  const k = lv - 1;
+  const k = lv - 1, fast = 1 - Math.exp(-k / 10);
   return {
     lv,
-    maxCreatures: Math.min(4 + Math.ceil(k / 2), 9),
-    spawnGap: [Math.max(.45, 1.3 - k * .08), Math.max(1, 2.6 - k * .14)],
-    speedMul: Math.min(1.75, 1 + k * .06),
-    armored: lv >= 3 ? Math.min(.28, .1 + (lv - 3) * .03) : 0,
-    energyTime: Math.max(75, 140 - k * 6),          // secondi per svuotare l'energia
+    maxCreatures: 4 + Math.round(4 * fast + k * .03),                                            // da 4 a 11
+    spawnGap: [Math.max(.4, 1.3 - .6 * fast - k * .002), Math.max(.9, 2.6 - 1.1 * fast - k * .004)],
+    speedMul: 1 + .55 * fast + k * .004,                                                          // da 1 a 1,95
+    armored: lv >= 3 ? Math.min(.34, .1 + .1 * (1 - Math.exp(-(lv - 3) / 8)) + (lv - 3) * .004) : 0,
+    energyTime: Math.max(60, 140 - 55 * fast - k * .2),          // secondi per svuotare l'energia: da 140 a 65
     shafts: lv < 4 ? [4, 5] : lv < 8 ? [3, 5] : [3, 4]
   };
 }

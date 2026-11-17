@@ -80,11 +80,17 @@ export class Input {
   }
 
   poll(dt) {
-    const e = this.edge = { up: false, down: false, left: false, right: false, confirm: false, back: false, pause: false, fullscreen: false, any: false, del: false, digits: [] };
+    // Oltre ai comandi dei menu tiene da parte ciò che serve per scrivere: digits e chars (cifre e
+    // lettere battute), nav (solo frecce e gamepad, non WASD) ed enter (solo Invio e gamepad, non Spazio).
+    const e = this.edge = { up: false, down: false, left: false, right: false, confirm: false, back: false, pause: false, fullscreen: false, any: false, del: false, digits: [], chars: [], nav: {}, enter: false };
     for (const code of this.queue) {
       e.any = true;
-      const digit = /^(?:Digit|Numpad)(\d)$/.exec(code);
-      if (digit) e.digits.push(digit[1]);               // per scrivere il codice di una partita
+      const digit = /^(?:Digit|Numpad)(\d)$/.exec(code), letter = /^Key([A-Z])$/.exec(code);
+      if (letter) e.chars.push(letter[1]);
+      if (code === 'Minus' || code === 'NumpadSubtract') e.chars.push('-');
+      if (code.startsWith('Arrow')) e.nav[MENU[code]] = true;
+      if (code === 'Enter' || code === 'NumpadEnter') e.enter = true;
+      if (digit) { e.digits.push(digit[1]); e.chars.push(digit[1]); }     // per scrivere il codice di una partita o il nome
       else if (code === 'Escape') { e.back = true; e.pause = true; }
       else if (code === 'Backspace') e.del = true;
       else if (MENU[code]) e[MENU[code]] = true;
@@ -97,7 +103,7 @@ export class Input {
     if (p) {
       const b = i => !!(p.buttons[i] && p.buttons[i].pressed);
       const hit = i => b(i) && !this.padPrev[i];
-      if (hit(0)) e.confirm = e.any = true;
+      if (hit(0)) e.confirm = e.enter = e.any = true;
       if (hit(1)) e.back = e.any = true;
       if (hit(9)) e.pause = e.any = true;
       this.padRetract = b(0) || b(2) || b(5) || b(7);
@@ -106,8 +112,8 @@ export class Input {
       else if (Math.max(Math.abs(ax), Math.abs(ay)) > .5) pd = Math.abs(ax) > Math.abs(ay) ? (ax > 0 ? 'right' : 'left') : (ay > 0 ? 'down' : 'up');
       for (let i = 0; i < p.buttons.length; i++) this.padPrev[i] = b(i);
       // nei menu: prima pressione subito, poi ripetizione tenendo premuto
-      if (pd !== this.repDir) { this.repDir = pd; this.repT = .4; if (pd) e[pd] = e.any = true; }
-      else if (pd) { this.repT -= dt; if (this.repT <= 0) { this.repT = .13; e[pd] = true; } }
+      if (pd !== this.repDir) { this.repDir = pd; this.repT = .4; if (pd) e[pd] = e.nav[pd] = e.any = true; }
+      else if (pd) { this.repT -= dt; if (this.repT <= 0) { this.repT = .13; e[pd] = e.nav[pd] = true; } }
     } else { this.padPrev.length = 0; this.repDir = null; }
     this.padDir = pd;
   }

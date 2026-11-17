@@ -1,7 +1,7 @@
 // Logica di gioco: sonda, tubo, mostri, cristalli, potenziamenti, punteggio.
 // Non disegna nulla e non suona nulla: segnala gli eventi con emit(nome).
 // Nota: ENTRY non è fisso, cambia a ogni settore (vedi setEntry in config.js).
-import { W, NX, NY, SP, Y0, N, RIG, ENTRY, EXTEND, RETRACT, HIT_RETRACT, MAX_LIVES, EXTRA_LIFE_EVERY, MONSTERS_PER_LIFE, TURBO_EXTEND, TURBO_RETRACT, BONUS_EVERY, BONUS_PELLET, BONUS_PERFECT, KINDS, POWERS, nodes, P, D, ek, rowOf } from './config.js';
+import { W, NX, NY, SP, Y0, N, RIG, ENTRY, EXTEND, RETRACT, HIT_RETRACT, MAX_LIVES, EXTRA_LIFE_EVERY, MONSTERS_PER_LIFE, TURBO_EXTEND, TURBO_RETRACT, BONUS_EVERY, BONUS_PELLET, BONUS_PERFECT, MAX_LEVEL, FINISH_BONUS, KINDS, POWERS, nodes, P, D, ek, rowOf } from './config.js';
 import { generateLevel, TYPES } from './level.js';
 
 const TURN_GRACE = 34;     // px oltre l'incrocio entro cui una svolta premuta in ritardo viene ancora presa
@@ -490,11 +490,13 @@ export class Game {
         this.phaseT -= dt;
         if (this.phaseT <= 0) {               // dopo ogni BONUS_EVERY settori c'è uno schermo bonus, che non conta come settore
           if (!this.bonusStage && this.level % BONUS_EVERY === 0) this.startLevel(this.level, null, true);
-          else this.startLevel(this.level + 1);
+          else if (this.level >= MAX_LEVEL && !this.attract) {          // ultimo settore superato: gioco completato
+            this.phase = 'won'; this.addScore(FINISH_BONUS); this.emit('won');
+          } else this.startLevel(this.level >= MAX_LEVEL ? 1 : this.level + 1);
           return;
         }
         break;
-      case 'over': break;
+      case 'over': case 'won': break;
     }
 
     // orientamento della bocca, polvere di scavo, particelle
