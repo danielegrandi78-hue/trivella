@@ -91,18 +91,18 @@ export class Renderer {
 
     // roccia a strati
     gr = g.createLinearGradient(0, GROUND, 0, H);
-    gr.addColorStop(0, `hsl(${hr},46%,18%)`); gr.addColorStop(.5, `hsl(${hr + 8},54%,10%)`); gr.addColorStop(1, `hsl(${hr + 16},60%,4%)`);
+    gr.addColorStop(0, `hsl(${hr},44%,33%)`); gr.addColorStop(.5, `hsl(${hr + 8},50%,24%)`); gr.addColorStop(1, `hsl(${hr + 16},56%,15%)`);
     g.fillStyle = gr; g.fillRect(0, GROUND, W, H - GROUND);
     for (let b = 0; b < 8; b++) {
       const y0 = GROUND + 26 + b * 72 + r() * 20, th = 16 + r() * 30, f = .004 + r() * .006, ph = r() * 9, am = 6 + r() * 12;
-      g.fillStyle = `hsla(${hr + r() * 40 - 20},50%,${r() < .5 ? 30 : 5}%,.2)`;
+      g.fillStyle = `hsla(${hr + r() * 40 - 20},50%,${r() < .5 ? 46 : 12}%,.22)`;
       g.beginPath(); g.moveTo(0, y0);
       for (let x = 0; x <= W; x += 20) g.lineTo(x, y0 + Math.sin(x * f + ph) * am);
       for (let x = W; x >= 0; x -= 20) g.lineTo(x, y0 + th + Math.sin(x * f * 1.3 + ph + 1) * am);
       g.closePath(); g.fill();
     }
     for (let i = 0; i < 280; i++) {
-      g.fillStyle = `hsla(${hr + r() * 40 - 20},40%,${r() < .5 ? 34 : 3}%,.07)`;
+      g.fillStyle = `hsla(${hr + r() * 40 - 20},40%,${r() < .5 ? 50 : 10}%,.08)`;
       g.beginPath(); g.ellipse(r() * W, GROUND + r() * (H - GROUND), 10 + r() * 46, 5 + r() * 18, r() * 3, 0, 6.283); g.fill();
     }
     for (let i = 0; i < 2200; i++) {
@@ -138,9 +138,10 @@ export class Renderer {
     };
     g.lineCap = 'round'; g.lineJoin = 'round';
     layer(`hsla(${hp},90%,60%,.09)`, TW + 14);
-    layer(`hsl(${hr},42%,31%)`, TW + 4);
-    layer('#04050c', TW);
-    g.strokeStyle = `hsla(${hr - 25},60%,16%,.5)`; g.lineWidth = TW - 15; g.stroke(tun);
+    layer(`hsl(${hr},46%,52%)`, TW + 4);                       // bordo chiaro: i cunicoli si staccano dalla roccia
+    layer('#080b1a', TW);
+    g.strokeStyle = `hsla(${hr - 25},55%,24%,.5)`; g.lineWidth = TW - 15; g.stroke(tun);
+    layer('#090c1e', 6);                 // il pavimento delle caverne resta aperto, senza la trama dei cunicoli
     return bg;
   }
 
@@ -287,7 +288,7 @@ export class Renderer {
     g.setTransform(S / 2, 0, 0, S / 2, 0, 0); g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
     g.clearRect(0, 0, W, H);
     const gr = g.createLinearGradient(0, GROUND, 0, GROUND + 90);
-    gr.addColorStop(0, 'rgba(2,2,10,0)'); gr.addColorStop(1, 'rgba(2,2,10,.6)');
+    gr.addColorStop(0, 'rgba(2,2,10,0)'); gr.addColorStop(1, 'rgba(2,2,10,.26)');      // penombra leggera lontano dalla sonda
     g.fillStyle = gr; g.fillRect(0, GROUND, W, H - GROUND);
     g.globalCompositeOperation = 'destination-out';
     glow(g, this.GLIGHT, h.x, h.y, 250, 1);
@@ -398,7 +399,7 @@ export class Renderer {
     if (game.flash > 0) { g.fillStyle = `rgba(255,40,40,${game.flash * .28})`; g.fillRect(0, 0, W, H); }
     if (frozen) { g.fillStyle = `rgba(120,200,255,${.05 + .02 * Math.sin(t * 5)})`; g.fillRect(0, GROUND, W, H - GROUND); }
     const gr = g.createRadialGradient(W / 2, H / 2, H * .45, W / 2, H / 2, H * .95);
-    gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,.55)');
+    gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,.3)');
     g.fillStyle = gr; g.fillRect(0, 0, W, H);
     if (opt.hud) this.drawHud(g, game, opt.hi || 0);
     if (opt.hud || opt.phase) this.drawPhase(g, game);
@@ -423,7 +424,9 @@ export class Renderer {
 
     txt(g, 'PUNTI', 290, 16, lab, dim, 3); txt(g, String(game.score).padStart(6, '0'), 290, 39, val, white, 2);
     txt(g, 'RECORD', 430, 16, lab, dim, 3); txt(g, String(Math.max(hi, game.score)).padStart(6, '0'), 430, 39, val, 'rgba(242,244,255,.6)', 2);
-    txt(g, 'SETTORE', 570, 16, lab, dim, 3); txt(g, String(game.level).padStart(2, '0'), 570, 39, val, white, 2);
+    txt(g, 'SETTORE', 570, 16, lab, dim, 3);
+    if (game.bonusStage) txt(g, 'BONUS', 570, 39, `700 20px ${FONT}`, `hsl(${hp},100%,72%)`, 2);
+    else txt(g, String(game.level).padStart(2, '0'), 570, 39, val, white, 2);
     const m = game.mult();
     txt(g, 'BONUS', 670, 16, lab, dim, 3); txt(g, '×' + m, 670, 39, val, m > 1 ? `hsl(${hp},100%,72%)` : 'rgba(242,244,255,.45)', 2);
 
@@ -473,9 +476,13 @@ export class Renderer {
     g.globalAlpha = 1;
   }
   drawPhase(g, game) {
-    const hp = game.prm.pal.pel, lv = String(game.level).padStart(2, '0');
-    if (game.phase === 'ready') this.banner(g, 'SETTORE ' + lv, game.L.name, Math.min(1, game.phaseT / .4), hp);
-    else if (game.phase === 'clear') this.banner(g, 'SETTORE ' + lv, 'COMPLETATO   BONUS +' + game.bonus, Math.min(1, (3.4 - game.phaseT) / .4, game.phaseT / .5), hp);
+    const hp = game.prm.pal.pel, lv = String(game.level).padStart(2, '0'), L = game.L;
+    const fade = Math.min(1, (3.4 - game.phaseT) / .4, game.phaseT / .5);
+    if (game.bonusStage && game.phase === 'ready') this.banner(g, 'SETTORE BONUS', 'NIENTE MOSTRI: RACCOGLI TUTTO PRIMA CHE FINISCA L\'ENERGIA', Math.min(1, game.phaseT / .4), hp);
+    else if (game.bonusStage && game.phase === 'clear')
+      this.banner(g, game.bonus ? 'PERFETTO!' : 'TEMPO SCADUTO', game.bonus ? 'TUTTI I CRISTALLI   BONUS +' + game.bonus : `CRISTALLI RACCOLTI  ${L.total - L.alive} SU ${L.total}`, fade, hp);
+    else if (game.phase === 'ready') this.banner(g, 'SETTORE ' + lv, game.L.name, Math.min(1, game.phaseT / .4), hp);
+    else if (game.phase === 'clear') this.banner(g, 'SETTORE ' + lv, 'COMPLETATO   BONUS +' + game.bonus, fade, hp);
     else if (game.phase === 'hit' && game.msg) this.banner(g, game.msg, game.lives > 0 ? 'SONDE RIMASTE  ' + game.lives : '', 1, 0, 52);
     else if (game.phase === 'over') this.banner(g, 'FINE PARTITA', '', 1, 0);
   }

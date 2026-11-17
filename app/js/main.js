@@ -361,6 +361,6 @@ window.__trivella = {
   start() { startGame(); return state(); },
   online: probe,
   // mostra un tipo di schermo preciso (0..6) per controllarne l'aspetto
-  show(type, lv) { startGame(); game.startLevel(lv || 1, type); draw(); return { name: game.L.name, lanes: game.L.lanes, pellets: game.L.alive, rooms: game.L.rooms.length, entry: game.L.entry }; },
+  show(type, lv, bonus) { startGame(); game.startLevel(lv || 1, type, bonus); draw(); return { name: game.L.name, lanes: game.L.lanes, pellets: game.L.alive, rooms: game.L.rooms.length, entry: game.L.entry }; },
   selftest() { startGame(); return this.step(4, { dirs: [{ x: 0, y: 1 }], retract: false }); }
 };

@@ -182,7 +182,8 @@ export function versusSide(g, p) {
   }
   g.fillStyle = 'rgba(200,205,255,.16)'; g.fillRect(x, b + 130, 100, 3);          // mostri mangiati verso la prossima sonda
   g.fillStyle = '#ff9d3c'; g.fillRect(x, b + 130, 100 * ((p.eaten | 0) % MONSTERS_PER_LIFE) / MONSTERS_PER_LIFE, 3);
-  txt(g, 'SETTORE', x + 150, b + 100, lab, dim, 3); txt(g, String(p.level).padStart(2, '0'), x + 150, b + 126, `700 22px ${FONT}`, WHITE, 2);
+  txt(g, 'SETTORE', x + 150, b + 100, lab, dim, 3);
+  txt(g, p.bonusStage ? 'BONUS' : String(p.level).padStart(2, '0'), x + 150, b + 126, `700 ${p.bonusStage ? 18 : 22}px ${FONT}`, WHITE, 2);
   txt(g, 'ENERGIA', x, b + 164, lab, dim, 3);
   const segs = 22, lit = Math.ceil(p.energy * segs), low = p.energy < .25;
   for (let i = 0; i < segs; i++) {

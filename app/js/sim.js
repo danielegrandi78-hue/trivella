@@ -1,7 +1,7 @@
 // Logica di gioco: sonda, tubo, mostri, cristalli, potenziamenti, punteggio.
 // Non disegna nulla e non suona nulla: segnala gli eventi con emit(nome).
 // Nota: ENTRY non è fisso, cambia a ogni settore (vedi setEntry in config.js).
-import { W, NX, NY, SP, Y0, N, RIG, ENTRY, EXTEND, RETRACT, HIT_RETRACT, MAX_LIVES, EXTRA_LIFE_EVERY, MONSTERS_PER_LIFE, TURBO_EXTEND, TURBO_RETRACT, KINDS, POWERS, nodes, P, D, ek, rowOf } from './config.js';
+import { W, NX, NY, SP, Y0, N, RIG, ENTRY, EXTEND, RETRACT, HIT_RETRACT, MAX_LIVES, EXTRA_LIFE_EVERY, MONSTERS_PER_LIFE, TURBO_EXTEND, TURBO_RETRACT, BONUS_EVERY, BONUS_PELLET, BONUS_PERFECT, KINDS, POWERS, nodes, P, D, ek, rowOf } from './config.js';
 import { generateLevel, TYPES } from './level.js';
 
 const TURN_GRACE = 34;     // px oltre l'incrocio entro cui una svolta premuta in ritardo viene ancora presa
@@ -37,9 +37,10 @@ export class Game {
     return this.lastType = this.typeQueue.pop();
   }
 
-  startLevel(lv, forceType) {
+  startLevel(lv, forceType, bonus) {
     this.level = lv;
-    this.L = generateLevel(lv, this.seed, forceType != null ? forceType : this.nextType());
+    this.bonusStage = !!bonus;
+    this.L = generateLevel(lv, this.seed, bonus ? -1 : forceType != null ? forceType : this.nextType(), bonus);
     this.prm = this.L.prm;
     this.pipe = [RIG]; this.inPipe = new Uint8Array(N + 1); this.inPipe[RIG] = 1;
     this.target = null; this.prog = 0;
@@ -50,7 +51,7 @@ export class Game {
     this.phase = 'ready'; this.phaseT = this.attract ? .4 : 1.9; this.msg = ''; this.bonus = 0;
     this.headAng = Math.PI / 2; this.reel = 0; this.shake = 0; this.flash = 0; this.motion = 0;
     this.blocked = null; this.blockedAt = -9; this.snapKey = '';
-    for (let i = 0; i < 3; i++) this.spawnCreature(true);
+    if (!bonus) for (let i = 0; i < 3; i++) this.spawnCreature(true);        // nello schermo bonus non ci sono mostri
     this.bgKey++;
     this.emit('ready');
   }
@@ -346,12 +347,12 @@ export class Game {
         this.burst(p.x, p.y, 40, POWERS[0].hue, 210, .8, 80); this.shake = Math.max(this.shake, 5);
         this.pop(p.x, p.y - 16, '+' + pts + '  LENTI', POWERS[0].hue); this.emit('crystal');
       } else {
-        this.addScore(10 * this.mult()); this.burst(p.x, p.y, 4, hue, 70, .35, 78); this.emit('pellet');
+        this.addScore((this.bonusStage ? BONUS_PELLET : 10) * this.mult()); this.burst(p.x, p.y, 4, hue, 70, .35, 78); this.emit('pellet');
       }
     }
     if (L.alive <= 0 && this.phase === 'play') {
       this.phase = 'clear'; this.phaseT = 3.4;
-      this.bonus = 1000 + Math.round(this.energy * 200) * 10; this.addScore(this.bonus);
+      this.bonus = this.bonusStage ? BONUS_PERFECT : 1000 + Math.round(this.energy * 200) * 10; this.addScore(this.bonus);
       this.emit('clear');
     }
   }
@@ -398,7 +399,7 @@ export class Game {
   snap() {
     const L = this.L, key = this.level + ':' + L.alive, r1 = v => Math.round(v * 10) / 10;
     const s = {
-      t: 's', sd: this.seed, lv: this.level, ty: L.type,
+      t: 's', sd: this.seed, lv: this.level, ty: L.type, bs: this.bonusStage ? 1 : 0,
       pi: this.pipe.slice(1), tg: this.target, pg: Math.round(this.prog * 1000) / 1000, mo: this.motion, ha: Math.round(this.headAng * 100) / 100,
       cr: this.creatures.map(c => [c.kind, c.row, c.dir, Math.round(c.x), Math.round(c.speed)]),
       pw: this.power ? [this.power.kind, this.power.x, this.power.y, r1(this.power.life)] : 0,
@@ -410,8 +411,9 @@ export class Game {
   }
   // Applica una fotografia ricevuta: questa partita diventa la copia di quella dell'avversario.
   applySnap(s) {
-    if (!this.L || s.sd !== this.seed || s.lv !== this.level || s.ty !== this.L.type) {
-      this.seed = s.sd; this.level = s.lv; this.L = generateLevel(s.lv, s.sd, s.ty); this.prm = this.L.prm;
+    if (!this.L || s.sd !== this.seed || s.lv !== this.level || s.ty !== this.L.type || !!s.bs !== this.bonusStage) {
+      this.seed = s.sd; this.level = s.lv; this.bonusStage = !!s.bs;
+      this.L = generateLevel(s.lv, s.sd, s.ty, this.bonusStage); this.prm = this.L.prm;
       this.bgKey++; this.parts = []; this.pops = [];
     }
     if (s.pm) this.setPelMask(s.pm);
@@ -450,9 +452,14 @@ export class Game {
         break;
       case 'play':
         this.energy -= dt / this.prm.energyTime;
+        if (this.bonusStage) this.fx.turbo = Math.max(this.fx.turbo, .5);        // nel bonus il Turbo non finisce mai
         if (this.attract) this.autoStep(dt); else this.manualStep(dt, inp);
         this.collect(dt);
         if (this.phase !== 'play') break;
+        if (this.bonusStage) {                // niente mostri né oggetti: finisce quando si esaurisce l'energia
+          if (this.energy <= 0) { this.energy = 0; this.bonus = 0; this.phase = 'clear'; this.phaseT = 3.4; this.emit('clear'); }
+          break;
+        }
         this.updatePower(dt);
         this.updateCreatures(dt, true);
         for (let i = this.gifts.length - 1; i >= 0; i--) if ((this.gifts[i].t -= dt) <= 0) { this.spawnCreature(false, this.gifts[i].kind); this.gifts.splice(i, 1); }
@@ -481,7 +488,11 @@ export class Game {
       case 'clear':
         this.reelIn(dt); this.updateCreatures(dt, false);
         this.phaseT -= dt;
-        if (this.phaseT <= 0) { this.startLevel(this.level + 1); return; }
+        if (this.phaseT <= 0) {               // dopo ogni BONUS_EVERY settori c'è uno schermo bonus, che non conta come settore
+          if (!this.bonusStage && this.level % BONUS_EVERY === 0) this.startLevel(this.level, null, true);
+          else this.startLevel(this.level + 1);
+          return;
+        }
         break;
       case 'over': break;
     }

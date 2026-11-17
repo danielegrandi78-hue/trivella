@@ -5,17 +5,19 @@
 //   L = corsia: galleria che attraversa tutto lo schermo ed esce ai lati (ci passano i mostri)
 //   P = tasche: tratti di galleria chiusi, senza mostri
 //   N = roccia piena: la attraversano solo i pozzi verticali
-import { NX, NY, N, PALETTES, nodes, ek, rng, setEntry } from './config.js';
+//   R = anelli: una fascia di righe R consecutive contiene gallerie chiuse ad anello attorno a isole di roccia
+import { NX, NY, N, PALETTES, BONUS_PAL, BONUS_TIME, nodes, ek, rng, setEntry } from './config.js';
 
+// Cinque tipi, ognuno con una sagoma che si riconosce a colpo d'occhio.
 export const TYPES = [
-  { name: 'GALLERIE', rows: ['LLLLLLLL'], shafts: 'random' },
-  { name: 'TASCHE', rows: ['LPLPLPLL', 'LLPLPLPL', 'LPLLPLPL'], shafts: 'random' },
-  { name: 'CAVERNE', rows: ['LLPLLPLL', 'LPLLLPLL', 'LLLPLLPL'], shafts: 'random', rooms: [2, 3] },
+  { name: 'CAVERNE', rows: ['LPLLPLPL', 'LLPLPLLP', 'LPLPLLPL'], shafts: 'random', rooms: [3, 4] },
   { name: 'SPECCHIO', rows: ['LPLLPLPL', 'LLPLPLLL', 'LPLPLLPL'], shafts: 'random', mirror: true },
-  { name: 'SCALINATA', rows: ['LLLLLLLL', 'LLLNLLLL', 'LLLLNLLL'], shafts: 'stairs' },
   { name: 'POZZO MAESTRO', rows: ['LPPLPPLL', 'LPLPPLPL', 'LPPLPLLP'], shafts: 'trunk' },
-  { name: 'ROCCIA DURA', rows: ['LNLNLLNL', 'LLNLNLNL', 'LNLLNLNL'], shafts: 'random' }
+  { name: 'ROCCIA DURA', rows: ['LNLNLLNL', 'LLNLNLNL', 'LNLLNLNL'], shafts: 'random' },
+  { name: 'ANELLI', rows: ['LRRRLRRL', 'LRRLRRRL'], shafts: 'random' }
 ];
+// Schermo bonus: simmetrico, con caverne piene di cristalli e nessun mostro.
+const BONUS_TYPE = { name: 'SETTORE BONUS', rows: ['LPLLPLPL', 'LLPLPLLP'], shafts: 'random', mirror: true, rooms: [2, 3] };
 
 // Difficoltà crescente con il numero del settore.
 export function levelParams(lv) {
@@ -31,14 +33,17 @@ export function levelParams(lv) {
   };
 }
 
-export function generateLevel(lv, seed, typeIdx) {
+// bonus = schermo bonus (typeIdx non conta)
+export function generateLevel(lv, seed, typeIdx, bonus) {
+  if (bonus) typeIdx = -1;
   const prm = levelParams(lv), r = rng((seed | 0) + lv * 7919 + typeIdx * 131);
   const int = n => (r() * n) | 0;
-  const type = TYPES[typeIdx], rows = type.rows[int(type.rows.length)].split('');
+  const type = bonus ? BONUS_TYPE : TYPES[typeIdx], rows = type.rows[int(type.rows.length)].split('');
   const mirror = !!type.mirror, style = type.shafts;
   const entry = (NX - 1) >> 1;          // la trivella parte sempre dal centro dello schermo
   setEntry(entry);
-  prm.pal = PALETTES[((seed >>> 0) + lv) % PALETTES.length];
+  prm.pal = bonus ? BONUS_PAL : PALETTES[((seed >>> 0) + lv) % PALETTES.length];
+  if (bonus) prm.energyTime = BONUS_TIME;
 
   const adj = Array.from({ length: N }, () => []);
   const id = (i, j) => j * NX + i;
@@ -48,6 +53,20 @@ export function generateLevel(lv, seed, typeIdx) {
   // 1. gallerie orizzontali
   rows.forEach((t, j) => {
     if (t === 'L') { hseg(j, 0, NX - 1); return; }
+    if (t === 'R') {                    // fascia di anelli: la disegna la sua prima riga
+      if (rows[j - 1] === 'R') return;
+      let h = 0; while (rows[j + h + 1] === 'R') h++;
+      for (let pos = int(2); pos < NX - 2;) {
+        const a = pos, b = Math.min(NX - 1, pos + 2 + int(4));
+        hseg(j, a, b); hseg(j + h, a, b);
+        for (let q = j; q < j + h; q++) { link(id(a, q), id(a, q + 1)); link(id(b, q), id(b, q + 1)); }
+        const up = a + int(b - a + 1), down = a + int(b - a + 1);       // un ingresso dall'alto e uno dal basso
+        if (j > 0) link(id(up, j - 1), id(up, j));
+        if (j + h + 1 < NY) link(id(down, j + h), id(down, j + h + 1));
+        pos = b + 2 + int(2);
+      }
+      return;
+    }
     if (t !== 'P') return;
     const segs = [];
     if (style === 'trunk') {            // rami che partono dal pozzo maestro
@@ -67,7 +86,7 @@ export function generateLevel(lv, seed, typeIdx) {
   if (type.rooms) {
     const cnt = type.rooms[0] + int(type.rooms[1] - type.rooms[0] + 1);
     for (let guard = 0; rooms.length < cnt && guard < 80; guard++) {
-      const w = 2 + int(3), h = 1 + int(2), c0 = 1 + int(NX - 2 - w), r0 = 1 + int(NY - 1 - h);
+      const w = 2 + int(4), h = 1 + int(2), c0 = 1 + int(NX - 2 - w), r0 = 1 + int(NY - 1 - h);
       const room = { c0, c1: c0 + w, r0, r1: r0 + h };
       if (rooms.some(o => !(room.c0 > o.c1 + 1 || room.c1 < o.c0 - 1 || room.r0 > o.r1 + 1 || room.r1 < o.r0 - 1))) continue;
       rooms.push(room);
@@ -86,7 +105,7 @@ export function generateLevel(lv, seed, typeIdx) {
   let prev = [entry];
   for (let j = 0; j < NY - 1; j++) {
     const cands = hcols[j];
-    if (!cands.length) continue;
+    if (!cands.length || rows[j] === 'R') continue;         // gli anelli hanno già i loro ingressi
     const [lo, hi] = prm.shafts;
     const want = rows[j] === 'L' ? lo + int(hi - lo + 1) : Math.max(1, Math.round(cands.length / 5));
     const picked = [];
@@ -125,7 +144,7 @@ export function generateLevel(lv, seed, typeIdx) {
   //    lontani dall'ingresso e distanti fra loro
   const exist = []; for (let u = 0; u < N; u++) if (adj[u].length) exist.push(u);
   const bigs = new Set();
-  for (let guard = 0; bigs.size < 4 && guard < 600; guard++) {
+  for (let guard = 0; !bonus && bigs.size < 4 && guard < 600; guard++) {
     const b = exist[int(exist.length)], bi = b % NX, bj = (b / NX) | 0;
     if (Math.abs(bi - entry) + bj <= 4) continue;
     if (guard < 400 && [...bigs].some(o => Math.abs(o % NX - bi) + Math.abs(((o / NX) | 0) - bj) < 6)) continue;
@@ -143,5 +162,5 @@ export function generateLevel(lv, seed, typeIdx) {
 
   const lanes = []; rows.forEach((t, j) => { if (t === 'L') lanes.push(j); });
   prm.maxCreatures = Math.max(3, Math.round(prm.maxCreatures * (.55 + .45 * lanes.length / NY)));
-  return { prm, adj, nodePel, edgePel, pelList, alive: pelList.length, lanes, rooms, entry, exist, name: type.name, type: typeIdx };
+  return { prm, adj, nodePel, edgePel, pelList, alive: pelList.length, total: pelList.length, lanes, rooms, entry, exist, name: type.name, type: typeIdx, bonus: !!bonus };
 }
